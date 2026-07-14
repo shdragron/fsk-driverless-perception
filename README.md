@@ -11,14 +11,14 @@ crop and regresses 7 keypoints on it. Those keypoints exist to feed PnP, which r
 3D position from a single camera.
 
 This fork replaces both with **one YOLO26n-pose model** that emits boxes and keypoints together,
-then asks the obvious follow-up: *how many keypoints do you actually need?* Fewer means a smaller
+then asks how many keypoints are actually needed. Fewer means a smaller
 head and an easier regression — but PnP needs at least four correspondences, and every one you
 remove takes away the redundancy it uses to average out error.
 
 RektNet is retained as the two-stage baseline, retrained on the same data with its geometric loss
 intact, so the comparison is architecture-vs-architecture rather than model-vs-memory.
 
-## Three things that will bite you if you skip them
+## Data caveats
 
 **1. The BRT split leaks — 88.9% of it.** BRT Cone Pose shuffles frames at random, but FSOCO frames
 come from continuous driving footage: `mms_00185` and `mms_00186` are the same scene 1/30 s apart.
@@ -85,8 +85,8 @@ BRT's keypoints are left/right pairs down the cone silhouette:
 - **YOLO-pose** handles this natively — absent keypoints have `visibility=0` and drop out of the loss.
 - **RektNet** did not: it is heatmap-based and the upstream code assumes all keypoints exist. Feeding
   it 8 keypoints naively means dropping every cone that lacks kpt6/7 — **94.7% of the dataset**, and
-  not at random: the discarded cones are the occluded, distant, hard ones. That silently flatters
-  RektNet and breaks parity with YOLO-pose.
+  not at random: the discarded cones are the occluded, distant, hard ones. The remaining set is
+  easier than the one YOLO-pose is scored on, so the two are no longer comparable.
 
   `src/train_rektnet.py` therefore adds a **visibility mask**: absent points are excluded from the
   location loss, from the heatmap target, and from any geometric term that involves them. This is an
@@ -94,7 +94,7 @@ BRT's keypoints are left/right pairs down the cone silhouette:
 
 ## Fidelity to the original RektNet
 
-Verified against the paper (arXiv:2007.13971) and the upstream code, not from memory:
+Against the paper (arXiv:2007.13971) and the upstream code:
 
 | | Original | Here | |
 |---|---|---|---|
@@ -139,13 +139,13 @@ both for this reason.
 `src/eval/benchmark.py` measures latency, throughput and peak memory — the numbers that decide
 whether this runs on the car.
 
-The two pipelines scale differently, and the difference is the whole argument:
+The two pipelines scale differently:
 
 - **single-stage**: one forward pass per *frame*, regardless of cone count
 - **two-stage**: one detection pass per frame, then one RektNet pass **per cone**
 
-The per-cone cost bites hardest exactly when you can least afford it — entering a slalom with twenty
-cones on screen. The benchmark sweeps cone count instead of reporting one number that hides this.
+The per-cone cost lands hardest when the frame is busiest — entering a slalom with twenty cones in
+view. The benchmark sweeps cone count rather than reporting a single figure.
 
 ```bash
 python -m src.eval.benchmark \
@@ -170,9 +170,8 @@ results/
 
 ## Status
 
-Results are being regenerated on the leak-free split. Earlier numbers measured on BRT's shipped
-split are not published here — they were inflated by the 88.9% temporal leak, and a number that
-flatters is worse than no number.
+Results are being regenerated on the leak-free split. Numbers measured on BRT's shipped split are
+not published here: the 88.9% temporal leak inflates them.
 
 ## License
 
