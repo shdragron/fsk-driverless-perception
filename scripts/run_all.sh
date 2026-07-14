@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Full pipeline on the leak-free split: train the three keypoint variants, evaluate depth via
-# PnP under every corruption, then train and evaluate RektNet as the two-stage baseline.
+# Full pipeline on the leak-free split:
+#   1. single-stage YOLO26n-pose at 8/6/4 keypoints
+#   2. PnP depth evaluation under every corruption
+#   3. two-stage RektNet-V at 8/6/4 keypoints
+#   4. its evaluation, plus the box-noise sweep only a two-stage pipeline is exposed to
+#   5. the MIT original -- YOLOv3 + unmodified 7-keypoint RektNet
 #
-# Runs strictly sequentially. Two jobs sharing this 12 GB card is survivable; two dataloader
-# fleets sharing 31 GB of RAM is not -- that combination already got a training run shot by the
-# kernel OOM killer once.
+# Strictly sequential. Two dataloader fleets do not fit in 31 GB of RAM together; that already
+# cost one training run to the kernel OOM killer.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,7 +55,7 @@ done
 
 # 8 as well as 6/4: the visibility mask makes it trainable. Without it, requiring all 8 keypoints
 # would drop the 94.7% of cones that have no kpt6/7, so upstream RektNet could only ever do 6.
-echo "[$(date +%H:%M)] === 3/4  train RektNet (two-stage baseline) ==="
+echo "[$(date +%H:%M)] === 3/4  train RektNet-V (two-stage) ==="
 for n in 8 6 4; do
     CROPS="$DATA/rektnet-clean-${n}kpt"
     if [ ! -f "$CROPS/test.csv" ]; then
@@ -62,22 +65,22 @@ for n in 8 6 4; do
     fi
     # Geometric loss stays ON. Ablating it would only make RektNet weaker, and the paper already
     # established its value; the question here is how the *best* RektNet compares to YOLO-pose.
-    OUT="$DATA/rektnet_runs/rektnet-${n}kpt.pt"
+    OUT="$DATA/rektnet_runs/rektnet-v-${n}kpt.pt"
     if [ -f "$OUT" ]; then
-        echo "[$(date +%H:%M)] rektnet ${n}kpt exists -- skipping"
+        echo "[$(date +%H:%M)] RektNet-V ${n}kpt exists -- skipping"
     else
-        echo "[$(date +%H:%M)] --- train rektnet ${n}kpt ---"
+        echo "[$(date +%H:%M)] --- train RektNet-V ${n}kpt ---"
         # Gammas default to the paper's tuned values (0.038 / 0.055).
         python -m src.train_rektnet --data "$CROPS" --num-kpt "$n" \
             --epochs "$RN_EPOCHS" --batch 64 --workers 6 --out "$OUT"
     fi
 done
 
-echo "[$(date +%H:%M)] === 4/4  evaluate RektNet ==="
+echo "[$(date +%H:%M)] === 4/4  evaluate RektNet-V ==="
 for n in 8 6 4; do
-    W="$DATA/rektnet_runs/rektnet-${n}kpt.pt"
+    W="$DATA/rektnet_runs/rektnet-v-${n}kpt.pt"
     [ -f "$W" ] || continue
-    base="rektnet-${n}kpt"
+    base="rektnet-v-${n}kpt"
     python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
         --brt-root "$DATA/brt-clean-8kpt" --out "$RESULTS/${base}_clean.json"
     for kind in noise blur sun; do

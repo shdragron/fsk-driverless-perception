@@ -1,4 +1,4 @@
-"""Evaluate RektNet with the same PnP depth metric used for the YOLO-pose models.
+"""Evaluate RektNet-V (or the 7-keypoint original) with the same PnP depth metric as YOLO-pose.
 
 RektNet only does keypoints -- it is handed a cone crop and never has to find the cone. To keep
 the comparison honest, it is fed crops cut from ground-truth boxes, i.e. a perfect detector.

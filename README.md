@@ -15,31 +15,33 @@ and measures how many keypoints PnP depth recovery actually needs.
 | | detector | keypoints | params |
 |---|---|---|---|
 | **single-stage** | YOLO26n-pose | same pass | 2.75 – 2.98 M |
-| **two-stage** | YOLO26n | RektNet*, one pass **per cone** | 2.6 M + 3.0 M |
+| **two-stage** | YOLO26n | **RektNet-V**, one pass **per cone** | 2.6 M + 3.0 M |
 | **MIT original** | YOLOv3 | RektNet, 7 kpt, per cone | 103.8 M + 3.0 M |
 
 The first two share a YOLO26n backbone, so comparing them isolates the architectural question — one
-pass or two — from detector generation. The MIT original is included to show what that generation
-gap is worth. Keypoint count (4 / 6 / 8) is ablated throughout.
+pass or two — from detector generation. The MIT original is there to show what that generation gap
+is worth. Keypoint count (4 / 6 / 8) is ablated throughout.
 
 Keypoints feed PnP, which recovers each cone's 3D position from a single camera. PnP needs four
 correspondences; anything beyond that is redundancy it uses to average out error.
 
-### *RektNet here is not the original RektNet
+### RektNet-V
 
-Same architecture — 80×80 crop, heatmap, soft-argmax — and the paper's tuned geometric-loss weights.
-Three things had to change for it to train on BRT at all:
+RektNet's architecture — 80×80 crop, heatmap, soft-argmax, cross-ratio loss at the paper's tuned
+weights (γvert 0.038, γhorz 0.055) — with three changes BRT's labels require:
 
-- **Keypoint layout.** The original's 7 points are an apex plus three left/right pairs. BRT has no
-  apex; it pairs every level. The collinearity and parallelism terms are re-derived for that chain.
-- **Visibility masking.** kpt6/7 exist on only 5.3% of cones. The original assumes every keypoint is
-  present, so feeding it 8 would mean discarding every cone without them — and those are the small,
-  distant, occluded ones. Absent points are instead masked out of the loss, the heatmap target, and
-  PnP, which is also what keeps the two pipelines scored on the same cones.
+- **Visibility masking** (the *V*). kpt6/7 exist on only 5.3% of cones; a small cone has no fourth
+  stripe boundary. RektNet assumes every keypoint is present, so training on 8 would mean dropping
+  every cone without them — the small, distant, occluded ones. Absent points are masked out of the
+  loss, the heatmap target, and PnP instead. This is also what keeps both pipelines scored on the
+  same cones.
 - **8 keypoints**, which the mask makes reachable.
+- **Re-derived geometry.** RektNet's chains are rooted at an apex; BRT has none, so the collinearity
+  and parallelism terms are rebuilt for its all-pairs layout.
 
-The MIT-original row uses a **7-keypoint approximation**: BRT's top pair is collapsed to its midpoint
-to stand in for the apex. It is not the original's labelling, and it is not as good.
+The MIT-original row runs the **unmodified 7-keypoint RektNet**, on a 7-keypoint approximation of
+BRT: the apex is synthesised as the midpoint of BRT's top pair. It reproduces the architecture, not
+the labelling.
 
 ## Dataset
 
@@ -82,7 +84,7 @@ every model.
 | 6 | — | — | — | — |
 | 4 | — | — | — | — |
 
-### Two-stage (YOLO26n + RektNet)
+### Two-stage (YOLO26n + RektNet-V)
 
 | kpt | pose mAP50-95 | depth err (median) | p90 |
 |---|---|---|---|
@@ -140,8 +142,8 @@ RTX 3060, 640×640, FP32, batch 1.
 
 | cones in frame | 1 | 5 | 10 | 20 | 30 |
 |---|---|---|---|---|---|
-| YOLO26n + RektNet (ms) | — | — | — | — | — |
-| YOLOv3 + RektNet (ms) | — | — | — | — | — |
+| YOLO26n + RektNet-V (ms) | — | — | — | — | — |
+| YOLOv3 + RektNet (7kpt) (ms) | — | — | — | — | — |
 
 *(pending RektNet training)*
 
@@ -178,7 +180,7 @@ python -m src.data.make_keypoint_variants --source <data>/brt-clean-8kpt --out-r
 bash scripts/run_all.sh
 ```
 
-## Fidelity to the original RektNet
+## RektNet-V vs the original
 
 | | original | here |
 |---|---|---|
@@ -201,7 +203,7 @@ src/
   eval/   eval_pose, eval_rektnet, summarize, benchmark
   viz/    plot_metrics, gallery, zoom, predict_image, predict_batch
   train_pose.py       single-stage
-  train_rektnet.py    two-stage (RektNet)
+  train_rektnet.py    RektNet-V, and the 7-kpt original
 scripts/run_all.sh
 ```
 

@@ -33,8 +33,15 @@ files that carry them.
     src/models/resnet.py         <- RektNet/resnet.py          (unmodified)
     src/models/cross_ratio_loss.py <- RektNet/cross_ratio_loss.py
                                  (MODIFIED: geometric loss re-derived for the
-                                  BRT 8-keypoint layout; the original hard-codes
-                                  RektNet's 7-point apex layout)
+                                  BRT 8-keypoint layout, and masked by keypoint
+                                  visibility; the original hard-codes RektNet's
+                                  7-point apex layout and assumes all keypoints
+                                  are present)
+
+  The two-stage pipeline here is called RektNet-V, not RektNet: it keeps RektNet's
+  architecture and the paper's tuned loss weights, but adds visibility masking (the
+  "V"), 8-keypoint support, and a geometric loss re-derived for BRT's layout. The
+  unmodified 7-keypoint RektNet is also run, for the MIT-original comparison.
 
   Every other file under src/ is new work written for this fork.
 
@@ -102,8 +109,3 @@ files that carry them.
     under FSOCO's terms; cite the FSOCO paper (arXiv:2012.07139). Intended for
     Formula Student / research use -- verify the current terms before any
     commercial use.
-
-  Note: the original MIT Driverless datasets (YOLO_Dataset.zip,
-  RektNet_Dataset.zip) are no longer downloadable -- the GCS bucket returns 403
-  ("The billing account for the owning project is disabled"). This is why the
-  pipeline here is built on BRT Cone Pose instead.

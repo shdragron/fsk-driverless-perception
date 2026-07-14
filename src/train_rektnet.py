@@ -1,4 +1,8 @@
-"""Train RektNet on BRT cone crops, so it can be compared head-to-head with YOLO26-pose.
+"""Train RektNet-V on BRT cone crops, for a head-to-head against single-stage YOLO26-pose.
+
+RektNet-V is RektNet with a visibility mask (hence the V), 8 keypoints, and its geometric loss
+re-derived for BRT's apex-less layout. Passing --num-kpt 7 instead runs the unmodified original,
+on the synthesised-apex labels from make_mit_7kpt.
 
 RektNet's own images are gone (the MIT bucket's billing lapsed), so this trains it on crops cut
 from the same BRT frames the YOLO-pose models see. Same cones, same splits -- the only thing
