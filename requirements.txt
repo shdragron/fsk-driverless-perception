@@ -1,0 +1,12 @@
+# YOLO26 (detection + pose). AGPL-3.0 -- this is what makes this repo AGPL-3.0.
+ultralytics>=8.4.0
+
+# RektNet baseline + everything else
+torch>=2.0
+torchvision
+opencv-python>=4.8
+numpy>=1.24
+matplotlib>=3.7
+
+# BRT ships its data on Google Drive
+gdown

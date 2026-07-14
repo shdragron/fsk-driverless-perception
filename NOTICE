@@ -1,0 +1,109 @@
+FSK Driverless Perception
+Cone detection and keypoint (pose) estimation for Formula Student Driverless.
+
+================================================================================
+LICENSING SUMMARY
+================================================================================
+
+This project is distributed under the GNU Affero General Public License v3.0
+(see LICENSE).
+
+AGPL-3.0 is required because the project depends on Ultralytics (YOLO26), which
+is itself AGPL-3.0. Code that links against an AGPL work and is then distributed
+must be released under the AGPL as well.
+
+Portions of this repository derive from Apache-2.0-licensed work (see below).
+Apache-2.0 is one-way compatible with (A)GPL-3.0: Apache-2.0 code may be
+incorporated into an AGPL-3.0 project, and the combined distribution is governed
+by the AGPL. The original Apache-2.0 license text is preserved verbatim in
+LICENSE.apache-2.0, and the original copyright notices are left intact in the
+files that carry them.
+
+================================================================================
+1. DERIVED FROM: MIT Driverless CV-TrainingInfra  (Apache-2.0)
+================================================================================
+
+  Source:  https://github.com/cv-core/MIT-Driverless-CV-TrainingInfra
+  License: Apache License 2.0  (preserved at LICENSE.apache-2.0)
+
+  This repository is a modified fork. The following files are taken from that
+  project, with modifications:
+
+    src/models/keypoint_net.py   <- RektNet/keypoint_net.py    (unmodified)
+    src/models/resnet.py         <- RektNet/resnet.py          (unmodified)
+    src/models/cross_ratio_loss.py <- RektNet/cross_ratio_loss.py
+                                 (MODIFIED: geometric loss re-derived for the
+                                  BRT 8-keypoint layout; the original hard-codes
+                                  RektNet's 7-point apex layout)
+
+  Every other file under src/ is new work written for this fork.
+
+  Removed from the fork: the original YOLOv3 implementation (CVC-YOLOv3), the
+  original RektNet training/eval entrypoints, and the tutorial notebooks. They
+  are superseded by the single-stage YOLO26-pose pipeline and are not needed to
+  reproduce these results. They remain available in the upstream repository.
+
+  If you use this work, please cite the original paper:
+
+    @misc{strobel2020accurate,
+      title  = {Accurate, Low-Latency Visual Perception for Autonomous Racing:
+                Challenges, Mechanisms, and Practical Solutions},
+      author = {Kieran Strobel and Sibo Zhu and Raphael Chang and Skanda Koppula},
+      year   = {2020},
+      eprint = {2007.13971},
+      archivePrefix = {arXiv},
+      primaryClass  = {cs.CV}
+    }
+
+================================================================================
+2. THIRD-PARTY DEPENDENCY: Ultralytics  (AGPL-3.0)
+================================================================================
+
+  Source:  https://github.com/ultralytics/ultralytics
+  License: AGPL-3.0
+
+  Used for YOLO26 model definitions, training, and inference. Not vendored --
+  installed as a pip dependency. Its AGPL-3.0 terms are what make this
+  repository AGPL-3.0.
+
+  Pretrained checkpoints (yolo26n.pt, yolo26n-pose.pt) are downloaded at runtime
+  from the Ultralytics assets release; they are NOT redistributed here and are
+  git-ignored. They carry Ultralytics' own license terms.
+
+  Note: the upstream MIT Driverless YOLOv3 code was itself originally forked
+  from ultralytics/yolov3. That code is not carried over into this fork.
+
+================================================================================
+3. THIRD-PARTY COPYRIGHT NOTICES RETAINED
+================================================================================
+
+  Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+
+  This notice appears in setup.py of the upstream project (derived from
+  maskrcnn-benchmark). That file is not carried into this fork; the notice is
+  recorded here for completeness of attribution.
+
+================================================================================
+4. DATASETS  (not redistributed -- code only)
+================================================================================
+
+  No dataset images, labels, or trained weights are included in this repository.
+  The scripts here download and process data you obtain yourself, under those
+  datasets' own terms.
+
+  BRT Cone Pose Dataset
+    Source:      https://github.com/Bauman-Racing-Team/BRT-Cone-Pose-Dataset
+    Annotations: CC BY 4.0 -- attribution to Bauman Racing Team (BRT) required.
+    Images:      derived from FSOCO; governed by FSOCO's terms, NOT by BRT's.
+
+  FSOCO (Formula Student Objects in Context)
+    Source: https://fsoco.github.io/fsoco-dataset/
+    The images underlying BRT Cone Pose originate here. Obtain and use them
+    under FSOCO's terms; cite the FSOCO paper (arXiv:2012.07139). Intended for
+    Formula Student / research use -- verify the current terms before any
+    commercial use.
+
+  Note: the original MIT Driverless datasets (YOLO_Dataset.zip,
+  RektNet_Dataset.zip) are no longer downloadable -- the GCS bucket returns 403
+  ("The billing account for the owning project is disabled"). This is why the
+  pipeline here is built on BRT Cone Pose instead.

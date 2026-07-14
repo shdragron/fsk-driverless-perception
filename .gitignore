@@ -1,0 +1,32 @@
+# Model weights -- never commit these.
+# Ultralytics checkpoints (yolo26n.pt, yolo26n-pose.pt) are AGPL-licensed artifacts fetched at
+# runtime, and trained weights are large binaries that do not belong in git.
+*.pt
+*.pth
+*.onnx
+*.weights
+
+# Datasets -- BRT/FSOCO images are not ours to redistribute (see NOTICE).
+# Anchored to the repo root: a bare `data/` would also swallow src/data/, which is source code.
+/data/
+/datasets/
+*.zip
+
+# Training output
+runs/
+wandb/
+results/metrics/*.json
+!results/metrics/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
