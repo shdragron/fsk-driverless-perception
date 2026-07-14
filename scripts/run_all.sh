@@ -50,46 +50,49 @@ for n in 8 6 4; do
     done
 done
 
+# 8 as well as 6/4: the visibility mask makes it trainable. Without it, requiring all 8 keypoints
+# would drop the 94.7% of cones that have no kpt6/7, so upstream RektNet could only ever do 6.
 echo "[$(date +%H:%M)] === 3/4  train RektNet (two-stage baseline) ==="
-for n in 6 4; do
+for n in 8 6 4; do
     CROPS="$DATA/rektnet-clean-${n}kpt"
     if [ ! -f "$CROPS/test.csv" ]; then
         echo "[$(date +%H:%M)] --- build ${n}kpt crops ---"
         python -m src.data.make_cone_crops --brt-root "$DATA/brt-clean-8kpt" \
             --out "$CROPS" --n-kpt "$n"
     fi
-    for geo in on off; do
-        [ "$geo" = off ] && FLAG="--no-geo" || FLAG=""
-        OUT="$DATA/rektnet_runs/rektnet-${n}kpt-geo${geo}.pt"
-        [ -f "$OUT" ] && { echo "[$(date +%H:%M)] ${n}kpt geo${geo} exists -- skipping"; continue; }
-        echo "[$(date +%H:%M)] --- train rektnet ${n}kpt geo=${geo} ---"
+    # Geometric loss stays ON. Ablating it would only make RektNet weaker, and the paper already
+    # established its value; the question here is how the *best* RektNet compares to YOLO-pose.
+    OUT="$DATA/rektnet_runs/rektnet-${n}kpt.pt"
+    if [ -f "$OUT" ]; then
+        echo "[$(date +%H:%M)] rektnet ${n}kpt exists -- skipping"
+    else
+        echo "[$(date +%H:%M)] --- train rektnet ${n}kpt ---"
+        # Gammas default to the paper's tuned values (0.038 / 0.055).
         python -m src.train_rektnet --data "$CROPS" --num-kpt "$n" \
-            --epochs "$RN_EPOCHS" --batch 64 --workers 6 $FLAG --out "$OUT"
-    done
+            --epochs "$RN_EPOCHS" --batch 64 --workers 6 --out "$OUT"
+    fi
 done
 
 echo "[$(date +%H:%M)] === 4/4  evaluate RektNet ==="
-for n in 6 4; do
-    for geo in on off; do
-        W="$DATA/rektnet_runs/rektnet-${n}kpt-geo${geo}.pt"
-        [ -f "$W" ] || continue
-        base="rektnet-${n}kpt-geo${geo}"
-        python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
-            --brt-root "$DATA/brt-clean-8kpt" --out "$RESULTS/${base}_clean.json"
-        for kind in noise blur sun; do
-            for lvl in 0.5 1.0; do
-                python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
-                    --brt-root "$DATA/brt-clean-8kpt" --corrupt "$kind" --level "$lvl" \
-                    --out "$RESULTS/${base}_${kind}_${lvl}.json"
-            done
-        done
-        # The failure mode a two-stage pipeline has and a one-stage one does not: the detector
-        # hands over an imperfect box.
-        for bn in 0.25 0.5 1.0; do
+for n in 8 6 4; do
+    W="$DATA/rektnet_runs/rektnet-${n}kpt.pt"
+    [ -f "$W" ] || continue
+    base="rektnet-${n}kpt"
+    python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
+        --brt-root "$DATA/brt-clean-8kpt" --out "$RESULTS/${base}_clean.json"
+    for kind in noise blur sun; do
+        for lvl in 0.5 1.0; do
             python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
-                --brt-root "$DATA/brt-clean-8kpt" --box-noise "$bn" \
-                --out "$RESULTS/${base}_boxnoise_${bn}.json"
+                --brt-root "$DATA/brt-clean-8kpt" --corrupt "$kind" --level "$lvl" \
+                --out "$RESULTS/${base}_${kind}_${lvl}.json"
         done
+    done
+    # The failure mode a two-stage pipeline has and a one-stage one does not: the detector hands
+    # over an imperfect box.
+    for bn in 0.25 0.5 1.0; do
+        python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
+            --brt-root "$DATA/brt-clean-8kpt" --box-noise "$bn" \
+            --out "$RESULTS/${base}_boxnoise_${bn}.json"
     done
 done
 

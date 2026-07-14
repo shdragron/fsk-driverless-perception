@@ -22,33 +22,23 @@ import cv2
 import numpy as np
 import torch
 
-from src.eval.eval_pose import CONE_DIMS_M, corrupt_image, distance_bucket, solve_depth
+# The cone's 3D model is imported, not redefined: if RektNet and YOLO-pose were scored against
+# even slightly different object points, the comparison between them would be meaningless.
+from src.eval.eval_pose import (LARGE_CLASS_ID, cone_object_points, corrupt_image,
+                                distance_bucket, solve_depth)
 from src.models.keypoint_net import KeypointNet
 
 INPUT_SIZE = (80, 80)
-LARGE_CLASS_ID = 1
-
-
-def cone_object_points(n_kpt, size="small"):
-    """Same cone geometry as the YOLO-pose eval, restricted to the kept keypoints."""
-    width, height = CONE_DIMS_M[size]
-    half = width / 2
-    levels = {6: [0.90, 0.62, 0.10], 4: [0.90, 0.10]}[n_kpt]
-    pts = []
-    for frac in levels:
-        r = half * (1 - frac)
-        z = frac * height
-        pts.append([-r, 0.0, z])
-        pts.append([+r, 0.0, z])
-    return np.array(pts, dtype=np.float64)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--weights", required=True, type=Path)
-    ap.add_argument("--num-kpt", required=True, type=int, choices=[4, 6])
+    ap.add_argument("--num-kpt", required=True, type=int, choices=[4, 6, 8])
     ap.add_argument("--brt-root", required=True, type=Path, help="Full frames + YOLO labels")
-    ap.add_argument("--corrupt", default="none", choices=["none", "blur", "noise", "dark"])
+    ap.add_argument("--corrupt", default="none",
+                    choices=["none", "blur", "noise", "dark",
+                             "sun", "overcast", "shadow", "backlight"])
     ap.add_argument("--level", default=0.0, type=float)
     ap.add_argument("--box-noise", default=0.0, type=float,
                     help="Jitter the GT box by this fraction, imitating detector error")
@@ -93,12 +83,19 @@ def main():
             t = [float(x) for x in line.split()]
             cls = int(t[0])
             kpts = np.array(t[5:]).reshape(-1, 3)[: args.num_kpt]
-            if (kpts[:, 2] == 0).any():
-                continue
+
+            # Feed PnP only the keypoints this cone actually has. Skipping any cone with an
+            # absent keypoint would, at 8kpt, discard the 94.7% of cones without kpt6/7 -- and
+            # those are the small, distant, hard ones. RektNet would then be scored on an easier
+            # set than YOLO-pose, and the two numbers would not be comparable.
+            valid = kpts[:, 2] > 0
+            if valid.sum() < 4:
+                continue  # PnP needs four correspondences
 
             cx, cy, bw, bh = np.array(t[1:5]) * [W, H, W, H]
-            gt_px = kpts[:, :2] * [W, H]
-            obj = obj_large if cls == LARGE_CLASS_ID else obj_small
+            gt_px = kpts[valid, :2] * [W, H]
+            obj_full = obj_large if cls == LARGE_CLASS_ID else obj_small
+            obj = obj_full[valid]
             gt_depth = solve_depth(obj, gt_px, np.array(
                 [[args.focal, 0, W / 2], [0, args.focal, H / 2], [0, 0, 1]], dtype=np.float64))
             if gt_depth is None:
@@ -120,7 +117,7 @@ def main():
 
             crop = cv2.resize(img[y1:y2, x1:x2], INPUT_SIZE)
             crops.append(crop.transpose(2, 0, 1) / 255.0)
-            metas.append((cls, obj, gt_depth, (x1, y1, x2 - x1, y2 - y1), bh))
+            metas.append((cls, obj, valid, gt_depth, (x1, y1, x2 - x1, y2 - y1), bh))
 
         if not crops:
             continue
@@ -130,9 +127,10 @@ def main():
             _, pred = model(batch)
         pred = pred.cpu().numpy()
 
-        for (cls, obj, gt_depth, (x1, y1, cw, ch), bh), pts in zip(metas, pred):
-            # Keypoints come back normalized to the crop; map them back to full-frame pixels.
-            px = pts * [cw, ch] + [x1, y1]
+        for (cls, obj, valid, gt_depth, (x1, y1, cw, ch), bh), pts in zip(metas, pred):
+            # Keypoints come back normalized to the crop; map them back to full-frame pixels, and
+            # use the same subset the reference pose was solved from.
+            px = (pts * [cw, ch] + [x1, y1])[valid]
             K = np.array([[args.focal, 0, W / 2], [0, args.focal, H / 2], [0, 0, 1]], dtype=np.float64)
             pd_depth = solve_depth(obj, px, K)
             if pd_depth is None:
