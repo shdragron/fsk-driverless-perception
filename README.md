@@ -2,9 +2,9 @@
 
 Single-stage cone detection and keypoint estimation for Formula Student Driverless.
 
-Replaces the two-stage **YOLOv3 → RektNet** pipeline with **one YOLO26n-pose model** that emits
-boxes and cone keypoints in a single pass, and measures how many keypoints are actually needed for
-PnP depth recovery.
+The MIT pipeline detects cones with YOLOv3, then runs RektNet on each crop to regress keypoints.
+This collapses both into **one YOLO26n-pose model** that emits boxes and keypoints in a single
+pass, and measures how many keypoints PnP depth recovery actually needs.
 
 > Fork of [cv-core/MIT-Driverless-CV-TrainingInfra](https://github.com/cv-core/MIT-Driverless-CV-TrainingInfra) (Apache-2.0). See [NOTICE](NOTICE).
 
@@ -12,12 +12,23 @@ PnP depth recovery.
 
 ## Model
 
-| | single-stage (this) | two-stage (baseline) |
-|---|---|---|
-| detection | YOLO26n-pose | YOLO26n |
-| keypoints | same pass | RektNet, one pass **per cone** |
-| params | 2.75 – 2.98 M | 2.6 M + 3.0 M |
-| keypoints per cone | 4 / 6 / 8 (ablated) | 4 / 6 / 8 |
+Three configurations, of which only two are runnable:
+
+| | detector | keypoints | params | |
+|---|---|---|---|---|
+| **MIT original** | YOLOv3 | RektNet, 7 kpt, per cone | 62 M + 3.0 M | not reproducible — see below |
+| **two-stage** | YOLO26n | RektNet, per cone | 2.6 M + 3.0 M | |
+| **single-stage** | YOLO26n-pose | same pass | 2.75 – 2.98 M | proposed |
+
+The MIT original cannot be retrained: both its datasets (`YOLO_Dataset.zip`, `RektNet_Dataset.zip`)
+are on a GCS bucket that now returns 403 (*billing account disabled*). RektNet's labels and
+pretrained weights survive in a fork, but the images do not, so there is nothing to train on.
+
+The comparison here is therefore **single-stage vs two-stage on the same YOLO26n backbone**. That
+isolates the architectural question — one pass or two — rather than confounding it with the eight
+years of detector progress between YOLOv3 and YOLO26.
+
+Keypoint count (4 / 6 / 8) is ablated on both.
 
 Keypoints feed PnP, which recovers each cone's 3D position from a single camera. PnP needs four
 correspondences; anything beyond that is redundancy it uses to average out error — which is what
@@ -158,7 +169,7 @@ src/
   eval/   eval_pose, eval_rektnet, summarize, benchmark
   viz/    plot_metrics, gallery, zoom, predict_image, predict_batch
   train_pose.py       single-stage
-  train_rektnet.py    two-stage baseline
+  train_rektnet.py    two-stage (RektNet)
 scripts/run_all.sh
 ```
 
