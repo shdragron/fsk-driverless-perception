@@ -67,13 +67,13 @@ class BRTCrossRatioLoss(nn.Module):
         self.gamma_vert = geo_loss_gamma_vert
         self.num_kpt = num_kpt
 
-        # Left indices are even, right are odd. Descending the cone the levels are
-        # top (0,1) -> mid (2,3) -> extra (6,7) -> base (4,5): the extra pair sits *above* the
-        # base, not below it, so the chain order is not simply the index order.
+        # Left indices are even, right are odd. Measured from the labels, the levels descend
+        # top (0,1) 0.742 -> mid (2,3) 0.581 -> base (4,5) 0.428 -> extra (6,7) 0.266.
+        # The extra pair is the LOWEST, not a middle one -- index order is not height order.
         if num_kpt == 8:
-            self.left_chain = [0, 2, 6, 4]
-            self.right_chain = [1, 3, 7, 5]
-            self.horizontals = [(0, 1), (2, 3), (6, 7), (4, 5)]
+            self.left_chain = [0, 2, 4, 6]
+            self.right_chain = [1, 3, 5, 7]
+            self.horizontals = [(0, 1), (2, 3), (4, 5), (6, 7)]
         elif num_kpt == 7:
             # The original RektNet layout: apex(0) + three left/right pairs. Both silhouettes run
             # from the apex, which is what the upstream loss enforced.

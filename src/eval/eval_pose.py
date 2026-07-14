@@ -43,6 +43,23 @@ LARGE_CLASS_ID = 1  # ORANGE_BIG
 # effective radius matches the square one's mean silhouette across all viewing angles.
 SILHOUETTE_FACTOR = 4 / np.pi
 
+# Stripe heights as a fraction of cone height, base = 0. Measured from BRT's own labels (median
+# keypoint position within its box; n = 88,208 small, 4,776 large) because neither the FS rules nor
+# WEMAS publish them. AMZ hit the same gap and measured a physical cone (arXiv:1905.05150, S3.2.3).
+#
+# The label heights hold across distance -- comparing near/mid/far cones, each keypoint's position
+# within its box moves by at most 0.02, well inside the +/-0.05 spread. So the annotation is
+# consistent enough for a single template to be meaningful.
+LEVELS = {
+    # A small cone has no fourth stripe, so "extra" is a placeholder: kpt6/7 always carry
+    # visibility 0 there and are masked out of the loss, the heatmap, and PnP. It only needs to be
+    # a valid number so the template can be built.
+    "small": {"top": 0.703, "mid": 0.451, "bot": 0.178, "extra": 0.089},
+    # A large cone's stripes sit higher, and it has a fourth pair -- which is BELOW the third:
+    # kpt6/7 at 0.266, kpt4/5 at 0.428. The index order is not the height order.
+    "large": {"top": 0.742, "mid": 0.581, "bot": 0.428, "extra": 0.266},
+}
+
 
 def cone_object_points(n_kpt, size="small"):
     """3D cone-frame coordinates for the BRT keypoint layout, origin at the cone's base centre.
@@ -50,41 +67,40 @@ def cone_object_points(n_kpt, size="small"):
     Keypoints are left/right silhouette pairs going down the cone; the silhouette half-width at a
     given height is what the camera sees, so each pair sits at +/-x of the cone's radius there.
 
-    Outer dimensions come from the FS rules; the square-to-round silhouette correction is exact.
-    What is NOT from the rules is the stripe heights -- the `levels` below are estimated from the
-    labels, because neither the FS rules nor WEMAS publish where the stripes sit. (AMZ hit the same
-    gap and measured a physical cone: arXiv:1905.05150, S3.2.3.)
+    Outer dimensions come from the FS rules and the square-to-round silhouette correction is exact.
+    The stripe heights are not in the rules; they are measured from the labels (see LEVELS).
 
-    A wrong stripe height scales every PnP distance by the same factor, so:
-
-      * absolute depth in metres carries that error, and cannot be compared with the paper's 0.5 m
-      * the metric used here does not: reference and predicted pose are solved with the same
-        template, so the scale error divides out. Injecting a 5% template error shifts absolute
-        depth 6-8% but moves the reported relative error by under 1 pp, with no consistent
-        direction across keypoint counts.
-
-    For metres you can trust -- e.g. feeding a ROS stack -- measure a cone and replace `levels`.
+    What remains unmodelled: the real cone is a truncated pyramid with a flared square base, not a
+    straight taper, so the radius at each stripe is approximate. That scales absolute depth. The
+    relative metric used here divides it out -- reference and prediction are solved with the same
+    template -- but a ROS stack consuming the metres should measure a physical cone.
     """
     width, height = CONE_DIMS_M[size]
     half = (width / 2) * SILHOUETTE_FACTOR   # square cone -> equivalent round-cone radius
 
-    # Fractional heights of each pair, top to bottom, and the taper (a cone narrows toward the tip).
+    # Stripe heights, as a fraction of cone height, measured from the labels themselves: the median
+    # keypoint position within its own box, over 88,208 small cones and 4,776 large ones. Neither
+    # the FS rules nor WEMAS publish these, and estimating them by eye was wrong by up to 0.33.
+    #
+    # Small and large cones differ -- the large cone's stripes sit higher and it has a fourth pair.
+    # Note the ordering on a large cone: kpt6/7 (0.266) are BELOW kpt4/5 (0.428), not above.
+    lv = LEVELS[size]
     if n_kpt == 8:
-        levels = [0.90, 0.62, 0.10, 0.38]  # pairs (0,1) (2,3) (4,5) (6,7) -- note 4/5 is the base
+        levels = [lv["top"], lv["mid"], lv["bot"], lv["extra"]]  # pairs (0,1) (2,3) (4,5) (6,7)
         order = [0, 1, 2, 3, 4, 5, 6, 7]
     elif n_kpt == 6:
-        levels = [0.90, 0.62, 0.10]
+        levels = [lv["top"], lv["mid"], lv["bot"]]
         order = [0, 1, 2, 3, 4, 5]
     elif n_kpt == 4:
-        levels = [0.90, 0.10]
+        levels = [lv["top"], lv["bot"]]
         order = [0, 1, 2, 3]
     elif n_kpt == 7:
-        # RektNet layout: apex + three left/right pairs. Here the apex is *synthesised* as the
-        # midpoint of BRT's top pair (see make_mit_7kpt.py), so it sits on the centreline at that
-        # pair's height -- 0.90 -- not at the cone's true tip. Modelling it at the tip would put a
-        # systematic bias into every PnP solve.
-        pts = [[0.0, 0.0, 0.90 * height]]   # apex is on the centreline, no width correction
-        for frac in (0.62, 0.36, 0.10):  # mid_top, mid_bot (interpolated), base
+        # RektNet layout: apex + three left/right pairs. The apex is synthesised as the midpoint of
+        # BRT's top pair (make_mit_7kpt.py), so it lies on the centreline at that pair's height --
+        # not at the cone's tip. Modelling it at the tip would bias every PnP solve.
+        pts = [[0.0, 0.0, lv["top"] * height]]
+        mid_bot = (lv["mid"] + lv["bot"]) / 2   # make_mit_7kpt interpolates this on small cones
+        for frac in (lv["mid"], mid_bot, lv["bot"]):
             r = half * (1 - frac)
             z = frac * height
             pts.append([-r, 0.0, z])
