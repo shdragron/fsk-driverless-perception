@@ -61,9 +61,12 @@ def main():
                 cx, cy, bw, bh = np.array(t[1:5]) * [W, H, W, H]
                 kpts = np.array(t[5:]).reshape(-1, 3)[keep]
 
-                # A cone whose kept keypoints are not all visible cannot supervise the loss.
-                if (kpts[:, 2] == 0).any():
-                    skipped_invisible += 1
+                # Keep the visibility flags rather than dropping partially-annotated cones. kpt6/7
+                # only exist on large orange cones (5.3% of the set) -- a small cone simply has no
+                # fourth stripe boundary. Requiring all 8 would throw away 94.7% of the data, so
+                # instead the flags are carried through and the loss masks the absent points.
+                if (kpts[:, 2] > 0).sum() < 4:
+                    skipped_invisible += 1  # too few points left to supervise anything
                     continue
 
                 pw, ph = bw * (1 + args.pad), bh * (1 + args.pad)
@@ -78,19 +81,32 @@ def main():
                 crop = img[y1:y2, x1:x2]
                 # Keypoints are absolute in the full frame; re-express them inside the crop.
                 local = kpts[:, :2] * [W, H] - [x1, y1]
-                if (local < 0).any() or (local[:, 0] > x2 - x1).any() or (local[:, 1] > y2 - y1).any():
-                    continue  # keypoint fell outside its own box -- bad label
+                vis = kpts[:, 2]
+
+                # A *visible* keypoint outside its own box is a bad label; an invisible one is
+                # just padding and its coordinates are meaningless, so only check the real ones.
+                seen = vis > 0
+                if seen.any() and (
+                    (local[seen] < 0).any()
+                    or (local[seen, 0] > x2 - x1).any()
+                    or (local[seen, 1] > y2 - y1).any()
+                ):
+                    continue
 
                 name = f"{lbl_path.stem}_{idx}.jpg"
                 cv2.imwrite(str(crop_dir / name), crop)
                 row = {"image": name, "cls": cls, "is_large": int(cls == LARGE_CLASS_ID)}
-                for n, (x, y) in zip(names, local):
+                for n, (x, y), v in zip(names, local, vis):
                     row[n] = f"[{x:.2f}, {y:.2f}]"
+                    row[f"{n}_vis"] = int(v)
                 rows.append(row)
 
         csv_path = args.out / f"{split}.csv"
+        cols = ["image", "cls", "is_large"]
+        for n in names:
+            cols += [n, f"{n}_vis"]
         with open(csv_path, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=["image", "cls", "is_large"] + names)
+            w = csv.DictWriter(f, fieldnames=cols)
             w.writeheader()
             w.writerows(rows)
         print(f"{split:<6} {len(rows):>7,} crops  "

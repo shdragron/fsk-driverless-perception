@@ -49,7 +49,10 @@ def _parallel(a, b, c, d):
     """Penalty for segment a-b not being parallel to segment c-d."""
     v1 = F.normalize(b - a, dim=1)
     v2 = F.normalize(d - c, dim=1)
-    return 1.0 - (v1 * v2).sum(dim=1).abs()
+    # No abs(): the original does not take one, and taking it would make a 180-degree flipped
+    # horizontal (left/right pair swapped) a zero-loss configuration -- forgiving precisely the
+    # failure mode the flip augmentation can introduce.
+    return 1.0 - (v1 * v2).sum(dim=1)
 
 
 class BRTCrossRatioLoss(nn.Module):
@@ -64,41 +67,70 @@ class BRTCrossRatioLoss(nn.Module):
         self.gamma_vert = geo_loss_gamma_vert
         self.num_kpt = num_kpt
 
-        # Left indices are even, right are odd; levels descend the cone.
-        # With only a top and a base pair there is no middle point, so nothing can be collinear.
-        if num_kpt >= 6:
+        # Left indices are even, right are odd. Descending the cone the levels are
+        # top (0,1) -> mid (2,3) -> extra (6,7) -> base (4,5): the extra pair sits *above* the
+        # base, not below it, so the chain order is not simply the index order.
+        if num_kpt == 8:
+            self.left_chain = [0, 2, 6, 4]
+            self.right_chain = [1, 3, 7, 5]
+            self.horizontals = [(0, 1), (2, 3), (6, 7), (4, 5)]
+        elif num_kpt == 6:
             self.left_chain = [0, 2, 4]
             self.right_chain = [1, 3, 5]
             self.horizontals = [(0, 1), (2, 3), (4, 5)]
-        else:  # 4 keypoints
+        else:  # 4 keypoints: a top and a base pair, nothing in between to be collinear with
             self.left_chain = []
             self.right_chain = []
             self.horizontals = [(0, 1), (2, 3)]
 
-    def forward(self, heatmap, points, target_hm, target_points):
+    def forward(self, heatmap, points, target_hm, target_points, vis=None):
+        """vis: (B, K) 1/0 mask. Points a cone does not have (kpt6/7 on a small cone) must not
+        be supervised -- their target coordinates are padding, and training on them teaches the
+        model to hallucinate a stripe boundary that is not there."""
+        if vis is None:
+            vis = torch.ones(points.shape[:2], device=points.device, dtype=points.dtype)
+        m = vis.unsqueeze(-1)                       # (B, K, 1) for the coordinate terms
+        denom = vis.sum().clamp(min=1.0)
+
         if self.loss_type in ("l2_softargmax", "l2_sm"):
-            location_loss = ((points - target_points) ** 2).sum(2).sum(1).mean()
+            location_loss = (((points - target_points) ** 2) * m).sum() / denom
         elif self.loss_type in ("l2_heatmap", "l2_hm"):
-            location_loss = ((heatmap - target_hm) ** 2).sum(3).sum(2).sum(1).mean()
+            hm_mask = vis.view(*vis.shape, 1, 1)
+            location_loss = (((heatmap - target_hm) ** 2) * hm_mask).sum() / denom
         elif self.loss_type in ("l1_softargmax", "l1_sm"):
-            location_loss = torch.abs(points - target_points).sum(2).sum(1).mean()
+            location_loss = ((points - target_points).abs() * m).sum() / denom
         else:
             raise ValueError(f"unknown loss type: {self.loss_type}")
 
         if not self.include_geo:
             return location_loss, torch.zeros((), device=points.device), location_loss
 
+        def geo_mask(*idx):
+            """A geometric term only applies where every point it involves actually exists."""
+            out = vis[:, idx[0]]
+            for i in idx[1:]:
+                out = out * vis[:, i]
+            return out
+
+        def masked_mean(term, mask):
+            return (term * mask).sum() / mask.sum().clamp(min=1.0)
+
         vert_terms = []
         for chain in (self.left_chain, self.right_chain):
             for i in range(len(chain) - 2):
+                a, b, c = chain[i], chain[i + 1], chain[i + 2]
                 vert_terms.append(
-                    _collinear(points[:, chain[i]], points[:, chain[i + 1]], points[:, chain[i + 2]])
+                    masked_mean(_collinear(points[:, a], points[:, b], points[:, c]),
+                                geo_mask(a, b, c))
                 )
 
         horz_terms = []
         for i in range(len(self.horizontals) - 1):
             (a, b), (c, d) = self.horizontals[i], self.horizontals[i + 1]
-            horz_terms.append(_parallel(points[:, a], points[:, b], points[:, c], points[:, d]))
+            horz_terms.append(
+                masked_mean(_parallel(points[:, a], points[:, b], points[:, c], points[:, d]),
+                            geo_mask(a, b, c, d))
+            )
 
         vert = torch.stack(vert_terms).mean() if vert_terms else torch.zeros((), device=points.device)
         horz = torch.stack(horz_terms).mean() if horz_terms else torch.zeros((), device=points.device)

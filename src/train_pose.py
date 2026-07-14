@@ -26,6 +26,11 @@ def main():
     parser.add_argument("--workers", default=8, type=int)
     parser.add_argument("--name", default=None, help="Run name under runs/")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--racing-aug", action="store_true",
+                        help="Add sun/overcast/shadow/backlight augmentation (noise and blur are "
+                             "held out so they stay unseen at evaluation time)")
+    parser.add_argument("--racing-aug-p", default=0.5, type=float,
+                        help="Probability a training image gets a lighting condition applied")
     args = parser.parse_args()
 
     if not args.data.is_file():
@@ -46,6 +51,12 @@ def main():
 
     model_path = args.model or ("yolo26n-pose.pt" if args.task == "pose" else "yolo26n.pt")
     model = YOLO(model_path)
+
+    if args.racing_aug:
+        # Lighting only -- noise and motion blur stay held out so the robustness evaluation
+        # measures generalisation rather than the model recognising its own augmentation.
+        from src.data.racing_augment import attach_racing_augment
+        attach_racing_augment(model, p=args.racing_aug_p)
 
     model.train(
         task=args.task,

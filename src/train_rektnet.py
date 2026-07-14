@@ -4,9 +4,15 @@ RektNet's own images are gone (the MIT bucket's billing lapsed), so this trains 
 from the same BRT frames the YOLO-pose models see. Same cones, same splits -- the only thing
 that differs is the architecture and the fact that RektNet is handed the box for free.
 
-The geometric (cross-ratio) loss is ON by default here, unlike the original CLI which defaults
-the gammas to 0. That loss is RektNet's headline contribution, and the original authors searched
-it over [0, 0.15] (train_eval_hyper.py); benchmarking RektNet without it would be a strawman.
+The geometric (cross-ratio) loss is ON by default here, unlike the original CLI whose gammas
+default to 0. That loss is RektNet's headline contribution, and benchmarking it without one would
+be a strawman. The weights are the ones the paper reports converging on -- gamma_vert=0.038,
+gamma_horz=0.055 (Eq. 2) -- not the [0, 0.15] search prior in train_eval_hyper.py.
+
+Keypoints carry a visibility mask. kpt6/7 exist only on large orange cones (5.3% of the set); a
+small cone has no fourth stripe boundary. Supervising those slots on a cone that lacks them would
+teach the model to invent a landmark. The original never faced this -- its 7 keypoints were
+always all present -- so this is an extension, not a reproduction.
 """
 import argparse
 import ast
@@ -36,7 +42,10 @@ class BRTCropDataset(Dataset):
         self.augment = augment
         with open(csv_path) as f:
             self.rows = list(csv.DictReader(f))
-        self.kpt_cols = [c for c in self.rows[0] if c not in ("image", "cls", "is_large")][:num_kpt]
+        cols = [c for c in self.rows[0] if c not in ("image", "cls", "is_large")]
+        self.kpt_cols = [c for c in cols if not c.endswith("_vis")][:num_kpt]
+        # Written by make_cone_crops; absent in older CSVs, in which case every point is visible.
+        self.has_vis = f"{self.kpt_cols[0]}_vis" in self.rows[0]
 
     def __len__(self):
         return len(self.rows)
@@ -46,6 +55,10 @@ class BRTCropDataset(Dataset):
         img = cv2.imread(str(self.images_dir / row["image"]))
         h, w = img.shape[:2]
         pts = np.array([ast.literal_eval(row[c]) for c in self.kpt_cols], dtype=np.float32)
+        if self.has_vis:
+            vis = np.array([float(row[f"{c}_vis"]) > 0 for c in self.kpt_cols], dtype=np.float32)
+        else:
+            vis = np.ones(self.num_kpt, dtype=np.float32)
 
         img = cv2.resize(img, INPUT_SIZE)
         pts = pts / [w, h]  # normalize before augmenting so flips are trivial
@@ -56,17 +69,21 @@ class BRTCropDataset(Dataset):
             # Mirroring swaps each left/right keypoint pair; without this the labels are wrong.
             order = [i + 1 if i % 2 == 0 else i - 1 for i in range(self.num_kpt)]
             pts = pts[order]
+            vis = vis[order]
 
-        hm = self._heatmap(pts)
+        hm = self._heatmap(pts, vis)
         img = torch.from_numpy(img.transpose(2, 0, 1) / 255.0).float()
-        return img, torch.from_numpy(hm).float(), torch.from_numpy(pts).float()
+        return (img, torch.from_numpy(hm).float(),
+                torch.from_numpy(pts).float(), torch.from_numpy(vis).float())
 
-    def _heatmap(self, pts):
-        """Gaussian target heatmap, one channel per keypoint."""
+    def _heatmap(self, pts, vis):
+        """Gaussian target heatmap, one channel per keypoint. Absent points get an empty channel."""
         H, W = INPUT_SIZE
         hm = np.zeros((self.num_kpt, H, W), dtype=np.float32)
         yy, xx = np.mgrid[0:H, 0:W]
         for k, (x, y) in enumerate(pts):
+            if not vis[k]:
+                continue  # no such landmark on this cone -- leave the channel at zero and mask it
             px, py = x * W, y * H
             hm[k] = np.exp(-((xx - px) ** 2 + (yy - py) ** 2) / (2 * 2.0 ** 2))
             s = hm[k].sum()
@@ -76,30 +93,44 @@ class BRTCropDataset(Dataset):
 
 
 def evaluate(model, loader, device, num_kpt):
-    """Mean per-keypoint L2 error in pixels of the 80x80 crop."""
+    """Mean L2 error in crop pixels, over the keypoints that actually exist on each cone.
+
+    Note this is a diagnostic, not a benchmark: the paper reports no per-keypoint pixel error to
+    compare against. Its published target is depth -- mean error < 0.5 m with < 5 cm std out to
+    20 m -- which is what eval_rektnet measures.
+    """
     model.eval()
     errs = []
+    scale = torch.tensor(INPUT_SIZE, dtype=torch.float32)
     with torch.no_grad():
-        for img, _, pts in loader:
+        for img, _, pts, vis in loader:
             img = img.to(device)
             _, pred = model(img)
-            d = torch.norm((pred.cpu() - pts) * torch.tensor(INPUT_SIZE, dtype=torch.float32), dim=2)
-            errs.append(d.numpy())
+            d = torch.norm((pred.cpu() - pts) * scale, dim=2)   # (B, K)
+            errs.append(d[vis > 0].numpy())
     return float(np.concatenate(errs).mean())
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data", required=True, type=Path, help="Dir with train/val/test CSVs + images/")
-    p.add_argument("--num-kpt", required=True, type=int, choices=[4, 6])
+    p.add_argument("--num-kpt", required=True, type=int, choices=[4, 6, 8],
+               help="8 requires the visibility mask: kpt6/7 exist only on large cones")
     p.add_argument("--epochs", default=200, type=int)
+    p.add_argument("--patience", default=8, type=int,
+                   help="Early-stop tolerance; 8 is the upstream value")
     p.add_argument("--batch", default=64, type=int)
     p.add_argument("--lr", default=1e-3, type=float,
                    help="The original default of 0.1 diverges on this data; 1e-3 is Adam's usual range")
     p.add_argument("--lr-gamma", default=0.995, type=float)
-    p.add_argument("--geo-gamma-vert", default=0.075, type=float,
-                   help="Midpoint of the [0, 0.15] range the RektNet authors tuned over")
-    p.add_argument("--geo-gamma-horz", default=0.075, type=float)
+    # The values the paper reports converging on (Eq. 2): "a Bayesian optimization framework was
+    # used to determine values for the loss constants, resulting in gamma_vert = 0.038 and
+    # gamma_horz = 0.055". [0, 0.15] in the upstream train_eval_hyper.py is the *search prior*,
+    # not a result -- these are the results, and they are asymmetric.
+    p.add_argument("--geo-gamma-vert", default=0.038, type=float,
+                   help="Vertical (collinearity) weight; 0.038 is the paper's tuned value")
+    p.add_argument("--geo-gamma-horz", default=0.055, type=float,
+                   help="Horizontal (parallelism) weight; 0.055 is the paper's tuned value")
     p.add_argument("--no-geo", action="store_true", help="Ablate the cross-ratio loss")
     p.add_argument("--workers", default=8, type=int)
     p.add_argument("--out", required=True, type=Path)
@@ -130,15 +161,15 @@ def main():
     print(f"geometric loss: {'OFF' if args.no_geo else f'ON (vert={args.geo_gamma_vert}, horz={args.geo_gamma_horz})'}")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    best_err, best_epoch = float("inf"), -1
+    best_err, best_epoch, stale = float("inf"), -1, 0
     for epoch in range(args.epochs):
         model.train()
         t0, totals = time.time(), np.zeros(3)
-        for img, hm, pts in train_dl:
-            img, hm, pts = img.to(device), hm.to(device), pts.to(device)
+        for img, hm, pts, vis in train_dl:
+            img, hm, pts, vis = img.to(device), hm.to(device), pts.to(device), vis.to(device)
             optimizer.zero_grad()
             pred_hm, pred_pts = model(img)
-            loc, geo, loss = loss_fn(pred_hm, pred_pts, hm, pts)
+            loc, geo, loss = loss_fn(pred_hm, pred_pts, hm, pts, vis)
             loss.backward()
             optimizer.step()
             totals += [loc.item(), float(geo), loss.item()]
@@ -149,9 +180,17 @@ def main():
         flag = ""
         if val_err < best_err:
             best_err, best_epoch, flag = val_err, epoch, "  *best"
+            stale = 0
             torch.save({"epoch": epoch, "model": model.state_dict(), "num_kpt": args.num_kpt}, args.out)
+        else:
+            stale += 1
         print(f"epoch {epoch:>3}  loc={totals[0]/n:.4f}  geo={totals[1]/n:.4f}  "
               f"val_px={val_err:.3f}  ({time.time()-t0:.0f}s){flag}", flush=True)
+
+        # The upstream trainer stops after 8 epochs with no improvement; honour that.
+        if stale >= args.patience:
+            print(f"early stop: no improvement for {args.patience} epochs")
+            break
 
     print(f"\nbest val error {best_err:.3f} px at epoch {best_epoch} -> {args.out}")
 
