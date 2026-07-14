@@ -72,9 +72,18 @@ swapped left/right landmarks. Every yaml written here sets it.
 
 ## Accuracy
 
-Depth error is **relative, not metres** — the reference pose is PnP on the ground-truth keypoints,
-and the metric is how far predicted keypoints move it, with one nominal focal length applied to
-every model.
+Depth error is **relative, not metres**. Two things are unknown: the camera intrinsics (BRT pools
+frames from many teams) and the cone's true 3D template — only its outer dimensions come from the FS
+rules; the stripe heights are estimated from the labels, and the radius assumes a straight taper.
+
+Both errors scale every PnP distance by the same factor, and the metric divides that out: the
+reference pose is PnP on the *ground-truth* keypoints and the measurement is how far the *predicted*
+keypoints move it, solved with the same template. Injecting a 5% template error shifts absolute
+depth by 6–8% but moves the reported figure by under 1 pp, with no consistent direction across
+keypoint counts.
+
+So model-vs-model holds. Absolute metres do not, and these numbers cannot be compared with the
+paper's 0.5 m. To get real metres, measure a cone and replace the template.
 
 ### Single-stage
 

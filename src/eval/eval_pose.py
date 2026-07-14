@@ -34,9 +34,22 @@ LARGE_CLASS_ID = 1  # ORANGE_BIG
 def cone_object_points(n_kpt, size="small"):
     """3D cone-frame coordinates for the BRT keypoint layout, origin at the cone's base centre.
 
-    Keypoints are left/right silhouette pairs going down the cone; the silhouette half-width at
-    a given height is what the camera actually sees, so each pair sits at +/-x of the cone's
-    radius at that height. Heights are taken at the stripe boundaries the annotators used.
+    Keypoints are left/right silhouette pairs going down the cone; the silhouette half-width at a
+    given height is what the camera sees, so each pair sits at +/-x of the cone's radius there.
+
+    NOT A SURVEYED TEMPLATE. Only the outer dimensions are real (FS rules). The stripe heights are
+    estimated from the labels -- BRT does not document where on the cone it placed its keypoints --
+    and the radius assumes a straight taper, whereas a real cone has a square base and a curved
+    body. A wrong template scales every PnP distance by the same wrong factor, so:
+
+      * absolute depth in metres is meaningless, and cannot be compared with the paper's 0.5 m
+      * the metric used here is immune to it: both the reference pose and the predicted pose are
+        solved with this same template, so the scale error divides out. Verified by injecting a 5%
+        template error -- the absolute depth shifts 6-8%, but the reported relative error moves by
+        under 1 pp, with no consistent direction across keypoint counts.
+
+    To get real metres, measure a cone: the height of each stripe boundary and the cone's width
+    there, then replace CONE_DIMS_M and the `levels` below.
     """
     width, height = CONE_DIMS_M[size]
     half = width / 2
