@@ -51,14 +51,18 @@ def cone_object_points(n_kpt, size="small"):
     elif n_kpt == 4:
         levels = [0.90, 0.10]
         order = [0, 1, 2, 3]
-    elif n_kpt == 7:  # RektNet: apex + 3 left/right pairs
-        pts = [[0.0, 0.0, height]]
-        for frac in (0.62, 0.32, 0.02):
+    elif n_kpt == 7:
+        # RektNet layout: apex + three left/right pairs. Here the apex is *synthesised* as the
+        # midpoint of BRT's top pair (see make_mit_7kpt.py), so it sits on the centreline at that
+        # pair's height -- 0.90 -- not at the cone's true tip. Modelling it at the tip would put a
+        # systematic bias into every PnP solve.
+        pts = [[0.0, 0.0, 0.90 * height]]
+        for frac in (0.62, 0.36, 0.10):  # mid_top, mid_bot (interpolated), base
             r = half * (1 - frac)
             z = frac * height
             pts.append([-r, 0.0, z])
             pts.append([+r, 0.0, z])
-        # RektNet order: top, mid_L_top, mid_R_top, mid_L_bot, mid_R_bot, bot_L, bot_R
+        # order: apex, mid_L_top, mid_R_top, mid_L_bot, mid_R_bot, bot_L, bot_R
         return np.array(pts, dtype=np.float64)
     else:
         raise ValueError(f"unsupported keypoint count: {n_kpt}")
@@ -73,15 +77,22 @@ def cone_object_points(n_kpt, size="small"):
 
 
 def solve_depth(object_points, image_points, K):
-    """Return the cone's depth (metres along the optical axis), or None if PnP fails."""
+    """Return the cone's depth (metres along the optical axis), or None if PnP fails.
+
+    SQPNP, not ITERATIVE: a cone's keypoints are left/right silhouette pairs, so every one of them
+    lies in the same plane (y=0 in the cone frame). OpenCV 5 raises on ITERATIVE with coplanar
+    points -- and since the exception is caught below, that failure would look like "PnP didn't
+    converge" and silently drop every cone. SQPNP handles the planar case and recovers the pose
+    exactly (verified: 5.000 m round-trip, against EPNP's 6.55 m).
+    """
     if len(image_points) < 4:
         return None
     try:
         ok, rvec, tvec = cv2.solvePnP(
-            object_points.astype(np.float64),
-            image_points.astype(np.float64),
+            np.ascontiguousarray(object_points, dtype=np.float64),
+            np.ascontiguousarray(image_points, dtype=np.float64),
             K, None,
-            flags=cv2.SOLVEPNP_ITERATIVE,
+            flags=cv2.SOLVEPNP_SQPNP,
         )
     except cv2.error:
         return None
@@ -281,7 +292,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--weights", required=True, help="Trained YOLO-pose .pt")
     p.add_argument("--data-root", required=True, type=Path)
-    p.add_argument("--n-kpt", required=True, type=int, choices=[4, 6, 8])
+    p.add_argument("--n-kpt", required=True, type=int, choices=[4, 6, 7, 8])
     p.add_argument("--corrupt", default="none", choices=["none", "blur", "noise", "dark"])
     p.add_argument("--level", default=0.0, type=float, help="Corruption strength, 0-1")
     p.add_argument("--device", default="0")

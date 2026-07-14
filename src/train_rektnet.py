@@ -114,7 +114,7 @@ def evaluate(model, loader, device, num_kpt):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data", required=True, type=Path, help="Dir with train/val/test CSVs + images/")
-    p.add_argument("--num-kpt", required=True, type=int, choices=[4, 6, 8],
+    p.add_argument("--num-kpt", required=True, type=int, choices=[4, 6, 7, 8],
                help="8 requires the visibility mask: kpt6/7 exist only on large cones")
     p.add_argument("--epochs", default=200, type=int)
     p.add_argument("--patience", default=8, type=int,

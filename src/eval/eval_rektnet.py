@@ -34,7 +34,7 @@ INPUT_SIZE = (80, 80)
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--weights", required=True, type=Path)
-    ap.add_argument("--num-kpt", required=True, type=int, choices=[4, 6, 8])
+    ap.add_argument("--num-kpt", required=True, type=int, choices=[4, 6, 7, 8])
     ap.add_argument("--brt-root", required=True, type=Path, help="Full frames + YOLO labels")
     ap.add_argument("--corrupt", default="none",
                     choices=["none", "blur", "noise", "dark",

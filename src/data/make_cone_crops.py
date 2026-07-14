@@ -5,9 +5,8 @@ RektNet consumes a single cone cropped to 80x80 and regresses keypoints inside t
 BRT ships full frames with boxes plus keypoints. This crops each GT box out and rewrites the
 keypoints into crop-local pixel coordinates, producing the CSV layout RektNet's loader wants.
 
-The original RektNet images are gone (the MIT bucket's billing lapsed), so training RektNet on
-BRT crops is not just a convenience -- it is the only way to train it at all, and it happens to
-make the comparison fair.
+Crops are cut from the same frames and splits the YOLO-pose models see, so the two pipelines are
+compared on identical cones.
 """
 import argparse
 import csv
@@ -18,7 +17,9 @@ import cv2
 import numpy as np
 
 # BRT keypoint order, with the large-cone-only pair last.
-KPT_NAMES = ["top_L", "top_R", "mid_L", "mid_R", "bot_L", "bot_R", "extra_L", "extra_R"]
+BRT_NAMES = ["top_L", "top_R", "mid_L", "mid_R", "bot_L", "bot_R", "extra_L", "extra_R"]
+# The MIT/RektNet layout produced by make_mit_7kpt: an apex plus three left/right pairs.
+MIT_NAMES = ["apex", "mid_L_top", "mid_R_top", "mid_L_bot", "mid_R_bot", "bot_L", "bot_R"]
 LARGE_CLASS_ID = 1
 
 
@@ -26,7 +27,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--brt-root", required=True, type=Path, help="brt-cone-pose-11k root")
     p.add_argument("--out", required=True, type=Path, help="Output dir for crops + CSVs")
-    p.add_argument("--n-kpt", default=8, type=int, choices=[4, 6, 8],
+    p.add_argument("--n-kpt", default=8, type=int, choices=[4, 6, 7, 8],
                    help="Keypoints to keep, matching the YOLO-pose variant being compared")
     p.add_argument("--pad", default=0.10, type=float,
                    help="Box padding, mimicking a real detector's slightly loose boxes")
@@ -34,8 +35,11 @@ def main():
                    help="Skip cones smaller than this; below it the crop is mostly interpolation")
     args = p.parse_args()
 
-    keep = {8: list(range(8)), 6: list(range(6)), 4: [0, 1, 4, 5]}[args.n_kpt]
-    names = [KPT_NAMES[i] for i in keep]
+    # 7 comes from make_mit_7kpt, whose labels already hold exactly the 7 RektNet points -- a
+    # different layout, not a subset of BRT's, so it gets its own names.
+    keep = {8: list(range(8)), 7: list(range(7)), 6: list(range(6)),
+            4: [0, 1, 4, 5]}[args.n_kpt]
+    names = MIT_NAMES if args.n_kpt == 7 else [BRT_NAMES[i] for i in keep]
 
     for split in ("train", "val", "test"):
         img_dir = args.brt_root / "images" / split

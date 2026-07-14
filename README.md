@@ -15,13 +15,31 @@ and measures how many keypoints PnP depth recovery actually needs.
 | | detector | keypoints | params |
 |---|---|---|---|
 | **single-stage** | YOLO26n-pose | same pass | 2.75 – 2.98 M |
-| **two-stage** | YOLO26n | RektNet, one pass **per cone** | 2.6 M + 3.0 M |
+| **two-stage** | YOLO26n | RektNet*, one pass **per cone** | 2.6 M + 3.0 M |
+| **MIT original** | YOLOv3 | RektNet, 7 kpt, per cone | 103.8 M + 3.0 M |
 
-Both run on the same YOLO26n backbone, so the comparison isolates the architectural question — one
-pass or two — rather than detector generation. Keypoint count (4 / 6 / 8) is ablated on both.
+The first two share a YOLO26n backbone, so comparing them isolates the architectural question — one
+pass or two — from detector generation. The MIT original is included to show what that generation
+gap is worth. Keypoint count (4 / 6 / 8) is ablated throughout.
 
 Keypoints feed PnP, which recovers each cone's 3D position from a single camera. PnP needs four
 correspondences; anything beyond that is redundancy it uses to average out error.
+
+### *RektNet here is not the original RektNet
+
+Same architecture — 80×80 crop, heatmap, soft-argmax — and the paper's tuned geometric-loss weights.
+Three things had to change for it to train on BRT at all:
+
+- **Keypoint layout.** The original's 7 points are an apex plus three left/right pairs. BRT has no
+  apex; it pairs every level. The collinearity and parallelism terms are re-derived for that chain.
+- **Visibility masking.** kpt6/7 exist on only 5.3% of cones. The original assumes every keypoint is
+  present, so feeding it 8 would mean discarding every cone without them — and those are the small,
+  distant, occluded ones. Absent points are instead masked out of the loss, the heatmap target, and
+  PnP, which is also what keeps the two pipelines scored on the same cones.
+- **8 keypoints**, which the mask makes reachable.
+
+The MIT-original row uses a **7-keypoint approximation**: BRT's top pair is collapsed to its midpoint
+to stand in for the apex. It is not the original's labelling, and it is not as good.
 
 ## Dataset
 
@@ -64,7 +82,7 @@ every model.
 | 6 | — | — | — | — |
 | 4 | — | — | — | — |
 
-### Two-stage
+### Two-stage (YOLO26n + RektNet)
 
 | kpt | pose mAP50-95 | depth err (median) | p90 |
 |---|---|---|---|
@@ -72,22 +90,28 @@ every model.
 | 6 | — | — | — |
 | 4 | — | — | — |
 
+### MIT original (YOLOv3 + RektNet, 7 kpt)
+
+| | box mAP50 | pose mAP50-95 | depth err (median) | p90 |
+|---|---|---|---|---|
+| 7 | — | — | — | — |
+
 *(sweep in progress)*
 
 ## Robustness
 
 Corruptions applied to the full frame at inference. Median depth error:
 
-| | single-stage 8 / 6 / 4 | two-stage 8 / 6 / 4 |
-|---|---|---|
-| clean | — | — |
-| `noise` high-ISO sensor noise | — | — |
-| `blur` directional motion blur | — | — |
-| `sun` bloom + veiling glare | — | — |
-| `overcast` flat light, low contrast | — | — |
-| `shadow` shaded band across frame | — | — |
-| `backlight` silhouettes, colour lost | — | — |
-| `box-noise` jittered detection box | n/a | — |
+| | single-stage 8 / 6 / 4 | two-stage 8 / 6 / 4 | MIT original |
+|---|---|---|---|
+| clean | — | — | — |
+| `noise` high-ISO sensor noise | — | — | — |
+| `blur` directional motion blur | — | — | — |
+| `sun` bloom + veiling glare | — | — | — |
+| `overcast` flat light, low contrast | — | — | — |
+| `shadow` shaded band across frame | — | — | — |
+| `backlight` silhouettes, colour lost | — | — | — |
+| `box-noise` jittered detection box | n/a | — | — |
 
 `box-noise` has no single-stage column: a mis-placed crop is a failure mode only a two-stage
 pipeline has.
@@ -116,8 +140,8 @@ RTX 3060, 640×640, FP32, batch 1.
 
 | cones in frame | 1 | 5 | 10 | 20 | 30 |
 |---|---|---|---|---|---|
-| total (ms) | — | — | — | — | — |
-| FPS | — | — | — | — | — |
+| YOLO26n + RektNet (ms) | — | — | — | — | — |
+| YOLOv3 + RektNet (ms) | — | — | — | — | — |
 
 *(pending RektNet training)*
 

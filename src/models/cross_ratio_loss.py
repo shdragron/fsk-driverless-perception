@@ -74,6 +74,12 @@ class BRTCrossRatioLoss(nn.Module):
             self.left_chain = [0, 2, 6, 4]
             self.right_chain = [1, 3, 7, 5]
             self.horizontals = [(0, 1), (2, 3), (6, 7), (4, 5)]
+        elif num_kpt == 7:
+            # The original RektNet layout: apex(0) + three left/right pairs. Both silhouettes run
+            # from the apex, which is what the upstream loss enforced.
+            self.left_chain = [0, 1, 3, 5]
+            self.right_chain = [0, 2, 4, 6]
+            self.horizontals = [(1, 2), (3, 4), (5, 6)]
         elif num_kpt == 6:
             self.left_chain = [0, 2, 4]
             self.right_chain = [1, 3, 5]
