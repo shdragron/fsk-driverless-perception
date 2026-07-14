@@ -4,7 +4,9 @@
 #   2. PnP depth evaluation under every corruption
 #   3. two-stage RektNet-V at 8/6/4 keypoints
 #   4. its evaluation, plus the box-noise sweep only a two-stage pipeline is exposed to
-#   5. the MIT original -- YOLOv3 + unmodified 7-keypoint RektNet
+#
+# The MIT original (YOLOv3 + 7-keypoint RektNet) lives in run_mit_original.sh -- YOLOv3 takes
+# ~17 h on its own and answers a different question.
 #
 # Strictly sequential. Two dataloader fleets do not fit in 31 GB of RAM together; that already
 # cost one training run to the kernel OOM killer.
@@ -98,60 +100,6 @@ for n in 8 6 4; do
             --out "$RESULTS/${base}_boxnoise_${bn}.json"
     done
 done
-
-# ---------------------------------------------------------------------------
-# 5. MIT original: YOLOv3 detector + RektNet on 7 keypoints.
-#
-# The apex is synthesised from BRT's top pair (see make_mit_7kpt.py), so this reproduces the
-# architecture, not the labelling. YOLOv3 is 103.8 M parameters against YOLO26n's 2.57 M -- a 40x
-# gap that is the point of including it.
-# ---------------------------------------------------------------------------
-echo "[$(date +%H:%M)] === 5/5  MIT original (YOLOv3 + RektNet-7kpt) ==="
-
-MIT7="$DATA/brt-clean-7kpt-mit"
-if [ ! -f "$MIT7/data.yaml" ]; then
-    echo "[$(date +%H:%M)] --- build 7kpt (apex synthesised) ---"
-    python -m src.data.make_mit_7kpt --source "$DATA/brt-clean-8kpt" --out "$MIT7"
-fi
-
-# YOLOv3 detector. Batch 16, not 32: at 103.8 M parameters it will not fit otherwise.
-if [ ! -f "$RUNS/../detect/mit-yolov3/weights/best.pt" ]; then
-    echo "[$(date +%H:%M)] --- train YOLOv3 detector ---"
-    python -m src.train_pose --task detect --model yolov3.yaml \
-        --data "$MIT7/data.yaml" --epochs "$EPOCHS" --imgsz 640 --batch 16 --workers 8 \
-        --name mit-yolov3
-fi
-
-RN7="$DATA/rektnet-clean-7kpt"
-if [ ! -f "$RN7/test.csv" ]; then
-    echo "[$(date +%H:%M)] --- build 7kpt crops ---"
-    python -m src.data.make_cone_crops --brt-root "$MIT7" --out "$RN7" --n-kpt 7
-fi
-
-OUT7="$DATA/rektnet_runs/rektnet-7kpt-mit.pt"
-if [ ! -f "$OUT7" ]; then
-    echo "[$(date +%H:%M)] --- train RektNet 7kpt ---"
-    python -m src.train_rektnet --data "$RN7" --num-kpt 7 \
-        --epochs "$RN_EPOCHS" --batch 64 --workers 6 --out "$OUT7"
-fi
-
-if [ -f "$OUT7" ]; then
-    echo "[$(date +%H:%M)] --- evaluate MIT original ---"
-    python -m src.eval.eval_rektnet --weights "$OUT7" --num-kpt 7 \
-        --brt-root "$MIT7" --out "$RESULTS/mit-7kpt_clean.json"
-    for kind in noise blur sun; do
-        for lvl in 0.5 1.0; do
-            python -m src.eval.eval_rektnet --weights "$OUT7" --num-kpt 7 \
-                --brt-root "$MIT7" --corrupt "$kind" --level "$lvl" \
-                --out "$RESULTS/mit-7kpt_${kind}_${lvl}.json"
-        done
-    done
-    for bn in 0.25 0.5 1.0; do
-        python -m src.eval.eval_rektnet --weights "$OUT7" --num-kpt 7 \
-            --brt-root "$MIT7" --box-noise "$bn" \
-            --out "$RESULTS/mit-7kpt_boxnoise_${bn}.json"
-    done
-fi
 
 echo "[$(date +%H:%M)] === done -- summarising ==="
 python -m src.eval.summarize --results "$RESULTS"
