@@ -3,8 +3,8 @@
 Single-stage cone detection and keypoint estimation for Formula Student Driverless.
 
 The MIT pipeline detects cones with YOLOv3, then runs RektNet on each crop to regress keypoints.
-This collapses both into **one YOLO26n-pose model** that emits boxes and keypoints in a single
-pass, and measures how many keypoints PnP depth recovery actually needs.
+This collapses both into **one YOLO26n-pose model** that emits boxes and keypoints in a single pass,
+and measures how many keypoints PnP depth recovery actually needs.
 
 > Fork of [cv-core/MIT-Driverless-CV-TrainingInfra](https://github.com/cv-core/MIT-Driverless-CV-TrainingInfra) (Apache-2.0). See [NOTICE](NOTICE).
 
@@ -12,128 +12,136 @@ pass, and measures how many keypoints PnP depth recovery actually needs.
 
 ## Model
 
-Three configurations, of which only two are runnable:
+| | detector | keypoints | params |
+|---|---|---|---|
+| **single-stage** | YOLO26n-pose | same pass | 2.75 – 2.98 M |
+| **two-stage** | YOLO26n | RektNet, one pass **per cone** | 2.6 M + 3.0 M |
 
-| | detector | keypoints | params | |
-|---|---|---|---|---|
-| **MIT original** | YOLOv3 | RektNet, 7 kpt, per cone | 62 M + 3.0 M | not reproducible — see below |
-| **two-stage** | YOLO26n | RektNet, per cone | 2.6 M + 3.0 M | |
-| **single-stage** | YOLO26n-pose | same pass | 2.75 – 2.98 M | proposed |
-
-The MIT original cannot be retrained: both its datasets (`YOLO_Dataset.zip`, `RektNet_Dataset.zip`)
-are on a GCS bucket that now returns 403 (*billing account disabled*). RektNet's labels and
-pretrained weights survive in a fork, but the images do not, so there is nothing to train on.
-
-The comparison here is therefore **single-stage vs two-stage on the same YOLO26n backbone**. That
-isolates the architectural question — one pass or two — rather than confounding it with the eight
-years of detector progress between YOLOv3 and YOLO26.
-
-Keypoint count (4 / 6 / 8) is ablated on both.
+Both run on the same YOLO26n backbone, so the comparison isolates the architectural question — one
+pass or two — rather than detector generation. Keypoint count (4 / 6 / 8) is ablated on both.
 
 Keypoints feed PnP, which recovers each cone's 3D position from a single camera. PnP needs four
-correspondences; anything beyond that is redundancy it uses to average out error — which is what
-the keypoint-count ablation tests.
+correspondences; anything beyond that is redundancy it uses to average out error.
 
-BRT's keypoints are left/right pairs down the cone:
+## Dataset
+
+| | |
+|---|---|
+| images | **[FSOCO](https://fsoco.github.io/fsoco-dataset/)** |
+| box + keypoint annotations | **[BRT Cone Pose](https://github.com/Bauman-Racing-Team/BRT-Cone-Pose-Dataset)** (Bauman Racing Team, CC BY 4.0) |
+| frames | 11,308 — train 9,165 / val 1,045 / test 1,098 |
+| cones | 103,653 |
+| classes | blue 41,015 · yellow 44,865 · orange 12,690 · orange_big 5,083 |
+| keypoints | 8 per cone, left/right pairs |
 
 ```
    0  1   top          kpt6/7 exist on large orange cones only (5.3%).
    2  3   mid          A small cone has no fourth stripe boundary, so
    6  7   extra        they carry a visibility flag and are masked out
-   4  5   base         of the loss, the heatmap, and PnP.
+   4  5   base         of the loss, the heatmap target, and PnP.
 ```
 
-## Dataset
+**Re-split before use.** BRT shuffles frames at random, but FSOCO frames come from continuous
+footage — `mms_00185` and `mms_00186` are the same scene 1/30 s apart. 88.9% of frames have a
+near-neighbour in a different split, which inflates test scores. `resplit_temporal.py` partitions by
+contiguous per-team frame blocks with boundary gaps → **0.0% leakage**. All results below use it.
 
-[BRT Cone Pose](https://github.com/Bauman-Racing-Team/BRT-Cone-Pose-Dataset) — 11,523 FSOCO frames,
-8 keypoints per cone, 5 classes. The original MIT datasets are gone (GCS bucket returns 403:
-*billing account disabled*).
-
-Two fixes it needs before use:
-
-**Temporal leakage.** BRT shuffles frames at random, but FSOCO frames come from continuous footage —
-`mms_00185` and `mms_00186` are the same scene 1/30 s apart. **88.9% of frames have a near-neighbour
-in a different split.** `resplit_temporal.py` partitions by contiguous per-team frame blocks with
-boundary gaps → **0.0% leakage**.
-
-Measured cost of the leak, 8kpt:
-
-| | leaked split | clean split |
-|---|---|---|
-| box mAP50 | 0.9684 | **0.9597** |
-| pose mAP50-95 | 0.9039 | **0.8772** |
-
-The keypoint metric falls three times as far as the box metric — memorising an adjacent frame helps
-most with the exact pixel location of a landmark.
-
-**Missing `flip_idx`.** Ultralytics defaults to `fliplr=0.5`; without `flip_idx` a horizontal flip
-mirrors the pixels but not the keypoint order, silently training half the data on swapped left/right
-landmarks. Every yaml written here sets it.
+**`flip_idx` is missing from BRT's yaml.** Ultralytics defaults to `fliplr=0.5`; without it a
+horizontal flip mirrors the pixels but not the keypoint order, silently training half the data on
+swapped left/right landmarks. Every yaml written here sets it.
 
 ## Accuracy
 
-*(regenerating on the clean split — table lands when the sweep finishes)*
+Depth error is **relative, not metres** — the reference pose is PnP on the ground-truth keypoints,
+and the metric is how far predicted keypoints move it, with one nominal focal length applied to
+every model.
 
-| model | box mAP50 | pose mAP50-95 | PnP depth err (median) | p90 |
+### Single-stage
+
+| kpt | box mAP50 | pose mAP50-95 | depth err (median) | p90 |
 |---|---|---|---|---|
-| 8kpt | 0.9597 | 0.8772 | — | — |
-| 6kpt | — | — | — | — |
-| 4kpt | — | — | — | — |
-| RektNet 8kpt | — | — | — | — |
+| 8 | 0.9597 | 0.8772 | — | — |
+| 6 | — | — | — | — |
+| 4 | — | — | — | — |
 
-Depth error is **relative, not metres**: BRT has no ground-truth depth, so PnP on the ground-truth
-keypoints is the reference and the metric is how far predicted keypoints move it, with one nominal
-focal length applied to every model. Model-vs-model is sound; the absolute figure is not comparable
-to the paper's 0.5 m.
+### Two-stage
+
+| kpt | pose mAP50-95 | depth err (median) | p90 |
+|---|---|---|---|
+| 8 | — | — | — |
+| 6 | — | — | — |
+| 4 | — | — | — |
+
+*(sweep in progress)*
 
 ## Robustness
 
-Corruptions applied to the full frame at inference:
+Corruptions applied to the full frame at inference. Median depth error:
 
-| | |
-|---|---|
-| `noise` | high-ISO sensor noise |
-| `blur` | directional motion blur |
-| `sun` | low sun into the lens — bloom + veiling glare |
-| `overcast` | flat light, contrast collapses |
-| `shadow` | shaded band across the frame |
-| `backlight` | silhouetted cones, colour destroyed |
-| `box-noise` | jittered detection box — **two-stage only** |
+| | single-stage 8 / 6 / 4 | two-stage 8 / 6 / 4 |
+|---|---|---|
+| clean | — | — |
+| `noise` high-ISO sensor noise | — | — |
+| `blur` directional motion blur | — | — |
+| `sun` bloom + veiling glare | — | — |
+| `overcast` flat light, low contrast | — | — |
+| `shadow` shaded band across frame | — | — |
+| `backlight` silhouettes, colour lost | — | — |
+| `box-noise` jittered detection box | n/a | — |
 
-Lighting can also be used as *training* augmentation (`--racing-aug`). Noise and blur are held out
-of training so the robustness numbers measure generalisation, not memorisation.
+`box-noise` has no single-stage column: a mis-placed crop is a failure mode only a two-stage
+pipeline has.
 
-*(results pending)*
+Lighting doubles as *training* augmentation (`--racing-aug`); noise and blur are held out of
+training so the numbers measure generalisation.
 
 **Read error alongside survivor counts.** Under heavy corruption the hard cones stop being detected
 and leave the error statistic, which makes the error *improve*. `summarize.py` prints both.
 
+*(sweep in progress)*
+
 ## Compute — PyTorch
 
-RTX 3060, 640×640, FP32, batch 1:
+RTX 3060, 640×640, FP32, batch 1.
 
-| model | params | mean | p95 | FPS |
+### Single-stage — one pass per frame
+
+| kpt | params | mean | p95 | FPS |
 |---|---|---|---|---|
-| 8kpt | 2.98 M | 66.9 ms | 68.9 ms | 14.9 |
-| 6kpt | 2.86 M | 55.6 ms | 65.8 ms | 18.0 |
-| 4kpt | 2.75 M | 51.4 ms | 53.8 ms | 19.5 |
+| 8 | 2.98 M | 66.9 ms | 68.9 ms | 14.9 |
+| 6 | 2.86 M | 55.6 ms | 65.8 ms | 18.0 |
+| 4 | 2.75 M | 51.4 ms | 53.8 ms | 19.5 |
 
-The two pipelines scale differently: single-stage is **one pass per frame**; two-stage is one
-detection pass **plus one RektNet pass per cone**. The benchmark sweeps cone count rather than
-reporting a single figure.
+### Two-stage — detector + one RektNet pass per cone
 
-*(two-stage numbers pending RektNet training)*
+| cones in frame | 1 | 5 | 10 | 20 | 30 |
+|---|---|---|---|---|---|
+| total (ms) | — | — | — | — | — |
+| FPS | — | — | — | — | — |
+
+*(pending RektNet training)*
 
 ## Compute — TensorRT
 
+Target hardware is **Jetson Orin**; measured on RTX 3060, so absolute latency differs but the
+model-vs-model and single-vs-two-stage comparisons carry over.
+
+### Single-stage — FP16
+
+| kpt | mean | p95 | FPS | speedup vs PyTorch |
+|---|---|---|---|---|
+| 8 | — | — | — | — |
+| 6 | — | — | — | — |
+| 4 | — | — | — | — |
+
+### Two-stage — FP16
+
+| cones in frame | 1 | 5 | 10 | 20 | 30 |
+|---|---|---|---|---|---|
+| total (ms) | — | — | — | — | — |
+| FPS | — | — | — | — | — |
+
 *(pending)*
-
-Target hardware is **Jetson Orin**. Numbers measured here are on an RTX 3060 — absolute latency will
-differ, but the model-vs-model and single-vs-two-stage comparisons carry over.
-
-```bash
-python -m src.eval.benchmark --pose-weights <...> --device cuda:0 --half
-```
 
 ## Run
 
@@ -157,7 +165,7 @@ bash scripts/run_all.sh
 | learning rate | 0.1 | **1e-3** — 0.1 diverges with Adam here |
 | augmentation | none | **+ horizontal flip** |
 | keypoint visibility | not addressed | **+ masked** |
-| reported accuracy | depth < 0.5 m mean, < 5 cm std to 20 m. No pixel-error figure | depth via PnP |
+| reported accuracy | depth < 0.5 m mean, < 5 cm std to 20 m | depth via PnP |
 
 ## Layout
 
