@@ -23,12 +23,25 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# FS rules: small cone 228 x 228 x 325 mm, large cone 285 x 285 x 505 mm.
+# FS Driverless Specification 2026, DS 1.3 (and FSAE DD.1.3): the cones are WEMAS Kegel E320/E500.
+#   small  228 x 228 x 325 mm
+#   large  285 x 285 x 505 mm
+# The 228 x 228 footprint is SQUARE -- these are truncated pyramids, not cones.
 CONE_DIMS_M = {
     "small": (0.228, 0.325),
     "large": (0.285, 0.505),
 }
 LARGE_CLASS_ID = 1  # ORANGE_BIG
+
+# A square cone's silhouette width depends on viewing azimuth: face-on you see the flat face
+# (half-width w/2), at 45 degrees the diagonal (w/2 * sqrt(2)) -- 41% wider. PnP cannot know the
+# azimuth; it is one of the unknowns being solved for. Modelling the cone as round with half-width
+# w/2 therefore under-reads it at every angle but zero, and PnP compensates by pushing the cone
+# further away.
+#
+# Averaging |cos t| + |sin t| over t in [0, pi/2] gives 4/pi ~ 1.273, so a round cone of that
+# effective radius matches the square one's mean silhouette across all viewing angles.
+SILHOUETTE_FACTOR = 4 / np.pi
 
 
 def cone_object_points(n_kpt, size="small"):
@@ -37,22 +50,23 @@ def cone_object_points(n_kpt, size="small"):
     Keypoints are left/right silhouette pairs going down the cone; the silhouette half-width at a
     given height is what the camera sees, so each pair sits at +/-x of the cone's radius there.
 
-    NOT A SURVEYED TEMPLATE. Only the outer dimensions are real (FS rules). The stripe heights are
-    estimated from the labels -- BRT does not document where on the cone it placed its keypoints --
-    and the radius assumes a straight taper, whereas a real cone has a square base and a curved
-    body. A wrong template scales every PnP distance by the same wrong factor, so:
+    Outer dimensions come from the FS rules; the square-to-round silhouette correction is exact.
+    What is NOT from the rules is the stripe heights -- the `levels` below are estimated from the
+    labels, because neither the FS rules nor WEMAS publish where the stripes sit. (AMZ hit the same
+    gap and measured a physical cone: arXiv:1905.05150, S3.2.3.)
 
-      * absolute depth in metres is meaningless, and cannot be compared with the paper's 0.5 m
-      * the metric used here is immune to it: both the reference pose and the predicted pose are
-        solved with this same template, so the scale error divides out. Verified by injecting a 5%
-        template error -- the absolute depth shifts 6-8%, but the reported relative error moves by
-        under 1 pp, with no consistent direction across keypoint counts.
+    A wrong stripe height scales every PnP distance by the same factor, so:
 
-    To get real metres, measure a cone: the height of each stripe boundary and the cone's width
-    there, then replace CONE_DIMS_M and the `levels` below.
+      * absolute depth in metres carries that error, and cannot be compared with the paper's 0.5 m
+      * the metric used here does not: reference and predicted pose are solved with the same
+        template, so the scale error divides out. Injecting a 5% template error shifts absolute
+        depth 6-8% but moves the reported relative error by under 1 pp, with no consistent
+        direction across keypoint counts.
+
+    For metres you can trust -- e.g. feeding a ROS stack -- measure a cone and replace `levels`.
     """
     width, height = CONE_DIMS_M[size]
-    half = width / 2
+    half = (width / 2) * SILHOUETTE_FACTOR   # square cone -> equivalent round-cone radius
 
     # Fractional heights of each pair, top to bottom, and the taper (a cone narrows toward the tip).
     if n_kpt == 8:
@@ -69,7 +83,7 @@ def cone_object_points(n_kpt, size="small"):
         # midpoint of BRT's top pair (see make_mit_7kpt.py), so it sits on the centreline at that
         # pair's height -- 0.90 -- not at the cone's true tip. Modelling it at the tip would put a
         # systematic bias into every PnP solve.
-        pts = [[0.0, 0.0, 0.90 * height]]
+        pts = [[0.0, 0.0, 0.90 * height]]   # apex is on the centreline, no width correction
         for frac in (0.62, 0.36, 0.10):  # mid_top, mid_bot (interpolated), base
             r = half * (1 - frac)
             z = frac * height
