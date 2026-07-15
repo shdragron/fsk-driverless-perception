@@ -22,6 +22,11 @@ RN_EPOCHS="${RN_EPOCHS:-60}"
 cd "$REPO"
 mkdir -p "$RESULTS"
 
+# Self-contained: activate the env here so the script is safe to (re)start from any shell.
+# Without this it silently falls back to the system python2.7, which cannot even parse an f-string.
+source /home/moon/anaconda3/etc/profile.d/conda.sh
+conda activate yolocone
+
 CORRUPTIONS=(noise blur sun overcast shadow backlight)
 LEVELS=(0.25 0.5 1.0)
 
@@ -44,13 +49,15 @@ for n in 8 6 4; do
     [ -f "$W" ] || { echo "[$(date +%H:%M)] SKIP ${n}kpt -- no weights"; continue; }
     ROOT="$DATA/brt-clean-${n}kpt"
 
-    python -m src.eval.eval_pose --weights "$W" --data-root "$ROOT" \
-        --n-kpt "$n" --out "$RESULTS/${n}kpt_clean.json"
+    O="$RESULTS/${n}kpt_clean.json"
+    [ -f "$O" ] || python -m src.eval.eval_pose --weights "$W" --data-root "$ROOT" \
+        --n-kpt "$n" --out "$O"
     for kind in "${CORRUPTIONS[@]}"; do
         for lvl in "${LEVELS[@]}"; do
+            O="$RESULTS/${n}kpt_${kind}_${lvl}.json"
+            [ -f "$O" ] && continue   # resume: skip evals already done
             python -m src.eval.eval_pose --weights "$W" --data-root "$ROOT" \
-                --n-kpt "$n" --corrupt "$kind" --level "$lvl" \
-                --out "$RESULTS/${n}kpt_${kind}_${lvl}.json"
+                --n-kpt "$n" --corrupt "$kind" --level "$lvl" --out "$O"
         done
     done
 done
@@ -83,21 +90,21 @@ for n in 8 6 4; do
     W="$DATA/rektnet_runs/rektnet-v-${n}kpt.pt"
     [ -f "$W" ] || continue
     base="rektnet-v-${n}kpt"
-    python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
-        --brt-root "$DATA/brt-clean-8kpt" --out "$RESULTS/${base}_clean.json"
+    [ -f "$RESULTS/${base}_clean.json" ] || python -m src.eval.eval_rektnet --weights "$W" \
+        --num-kpt "$n" --brt-root "$DATA/brt-clean-8kpt" --out "$RESULTS/${base}_clean.json"
     for kind in noise blur sun; do
         for lvl in 0.5 1.0; do
+            O="$RESULTS/${base}_${kind}_${lvl}.json"; [ -f "$O" ] && continue
             python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
-                --brt-root "$DATA/brt-clean-8kpt" --corrupt "$kind" --level "$lvl" \
-                --out "$RESULTS/${base}_${kind}_${lvl}.json"
+                --brt-root "$DATA/brt-clean-8kpt" --corrupt "$kind" --level "$lvl" --out "$O"
         done
     done
     # The failure mode a two-stage pipeline has and a one-stage one does not: the detector hands
     # over an imperfect box.
     for bn in 0.25 0.5 1.0; do
+        O="$RESULTS/${base}_boxnoise_${bn}.json"; [ -f "$O" ] && continue
         python -m src.eval.eval_rektnet --weights "$W" --num-kpt "$n" \
-            --brt-root "$DATA/brt-clean-8kpt" --box-noise "$bn" \
-            --out "$RESULTS/${base}_boxnoise_${bn}.json"
+            --brt-root "$DATA/brt-clean-8kpt" --box-noise "$bn" --out "$O"
     done
 done
 

@@ -17,6 +17,9 @@ RN_EPOCHS="${RN_EPOCHS:-60}"
 cd "$REPO"
 mkdir -p "$RESULTS"
 
+source /home/moon/anaconda3/etc/profile.d/conda.sh
+conda activate yolocone
+
 # ---------------------------------------------------------------------------
 # 5. MIT original: YOLOv3 detector + RektNet on 7 keypoints.
 #

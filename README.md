@@ -89,9 +89,24 @@ Detection is identical across all three (box mAP50 0.960–0.963); the whole dif
 the keypoints are for. On clean frames the depth gap is small (4.3 vs 4.5%), but it opens up under
 noise — see below.
 
-### Two-stage (YOLO26n + RektNet-V) and MIT original (YOLOv3 + RektNet-7kpt)
+### Two-stage (YOLO26n + RektNet-V)
 
-*(training)*
+RektNet is fed crops cut from **ground-truth** boxes — a perfect detector — so these are its
+best-case numbers.
+
+| kpt | PnP depth err (median, clean) |
+|---|---|
+| 8 | **2.3%** |
+| 6 | 2.3% |
+| 4 | 2.2% |
+
+Given a clean crop, two-stage roughly halves the single-stage error (2.3% vs 4.3%), and keypoint
+count barely matters — RektNet only ever sees one cone, so it has no distant-cone problem to solve.
+But that win depends entirely on the crop being right; see `box-noise` below.
+
+### MIT original (YOLOv3 + RektNet-7kpt)
+
+*(separate run — `scripts/run_mit_original.sh`; YOLOv3 is 103.8 M params and takes ~17 h)*
 
 > **Depth error is relative, not metres.** Camera intrinsics are unknown (BRT pools many teams'
 > cameras) and the cone template's stripe heights are measured from the labels, not surveyed. Both
@@ -124,59 +139,54 @@ redundancy cannot fix.
 **6kpt is consistently the worst of the three**, not the middle. Dropping the large-cone pair left
 it an awkward halfway layout that helps neither the pose-mAP nor the PnP side.
 
-Two evaluations not in the table yet, both pending the two-stage models:
+### box-noise — the two-stage pipeline's own failure mode
 
-- `box-noise` — a jittered detection box, the failure mode only a *two-stage* pipeline has.
-- the two-stage and MIT-original columns.
+RektNet assumes the crop is right. A real detector's box is not. Jittering the ground-truth box
+before cropping shows what that costs:
+
+| box-noise | 2-stage 8kpt | 6kpt | 4kpt |
+|---|---|---|---|
+| 0.25 | 3.0% | 3.1% | 2.9% |
+| 0.5 | 4.7% | 4.7% | 4.7% |
+| 1.0 | **9.2%** | 9.1% | 9.6% |
+
+A perfect crop gives two-stage 2.3%; a badly-placed one pushes it to 9.2% — **worse than
+single-stage** (≈5% under comparable corruption). The two-stage advantage is entirely contingent
+on detection quality, which is exactly what it cannot control. Single-stage has no such term: it
+detects and localises in one pass, so there is no crop to misplace.
 
 Lighting doubles as *training* augmentation (`--racing-aug`); noise and blur are held out of
 training so these numbers measure generalisation, not memorisation. Read error alongside the
 survivor rate: under heavy corruption the hard cones stop being detected and leave the statistic,
-which makes the error *improve* — `noise`@1.0 (not shown) drops to ~10% survival and the median is
-meaningless there.
+which makes the error *improve* — `noise`@1.0 drops to ~10% survival and its median is meaningless.
 
-## Compute — PyTorch
+## Compute
 
-RTX 3060, 640×640, FP32, batch 1.
+RTX 3060, FP16, 640×640, batch 1. Absolute latency is hardware-specific — the deployment target is
+a Jetson Orin, where it will differ — but the single-vs-two-stage scaling carries over.
 
-### Single-stage — one pass per frame
+### Single-stage — one pass per frame, regardless of cone count
 
 | kpt | params | mean | p95 | FPS |
 |---|---|---|---|---|
-| 8 | 2.98 M | 66.9 ms | 68.9 ms | 14.9 |
-| 6 | 2.86 M | 55.6 ms | 65.8 ms | 18.0 |
-| 4 | 2.75 M | 51.4 ms | 53.8 ms | 19.5 |
+| 8 | 2.98 M | 34.9 ms | 67.8 ms | 28.7 |
+| 6 | 2.86 M | 27.4 ms | 47.2 ms | 36.5 |
+| 4 | 2.75 M | 27.0 ms | 50.2 ms | 37.1 |
 
-### Two-stage — detector + one RektNet pass per cone
-
-| cones in frame | 1 | 5 | 10 | 20 | 30 |
-|---|---|---|---|---|---|
-| YOLO26n + RektNet-V (ms) | — | — | — | — | — |
-| YOLOv3 + RektNet (7kpt) (ms) | — | — | — | — | — |
-
-*(pending RektNet training)*
-
-## Compute — TensorRT
-
-Target hardware is **Jetson Orin**; measured on RTX 3060, so absolute latency differs but the
-model-vs-model and single-vs-two-stage comparisons carry over.
-
-### Single-stage — FP16
-
-| kpt | mean | p95 | FPS | speedup vs PyTorch |
-|---|---|---|---|---|
-| 8 | — | — | — | — |
-| 6 | — | — | — | — |
-| 4 | — | — | — | — |
-
-### Two-stage — FP16
+### Two-stage — detector + one RektNet pass **per cone**
 
 | cones in frame | 1 | 5 | 10 | 20 | 30 |
 |---|---|---|---|---|---|
-| total (ms) | — | — | — | — | — |
-| FPS | — | — | — | — | — |
+| total (ms) | 31.8 | 34.9 | 39.1 | 43.2 | **48.2** |
+| FPS | 31.4 | 28.7 | 25.6 | 23.1 | **20.7** |
 
-*(pending)*
+Two-stage cost grows with cone count — one RektNet pass each — while single-stage is flat. At 30
+cones (a slalom entry, the busiest and most safety-critical frame) two-stage is **1.79× slower**
+(48.2 ms vs 27.0 ms). This is where the per-cone cost hurts most.
+
+*Deployment note:* TensorRT export works (`benchmark.py`), but TensorRT's pip package pulls CUDA-13
+libraries that break this env's CUDA-12 PyTorch, so engine builds are left for the Orin, where they
+belong. The numbers above are native PyTorch FP16.
 
 ## Run
 

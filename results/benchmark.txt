@@ -1,0 +1,21 @@
+device: NVIDIA GeForce RTX 3060  |  fp16: True  |  imgsz: 640
+
+SINGLE-STAGE (per frame, cone count does not matter)
+model           params(M)   mean(ms)   p95(ms)     FPS   mem(MB)
+8kpt                 2.98      34.86     67.80    28.7      52.9
+6kpt                 2.86      27.39     47.19    36.5      52.7
+4kpt                 2.75      26.96     50.19    37.1      52.4
+
+TWO-STAGE (detector + RektNet per cone)           
+detector             2.57      29.49     45.86    33.9      52.1
+
+ cones  rektnet(ms)   total(ms)     FPS
+     1         2.32       31.81    31.4
+     5         5.37       34.86    28.7
+    10         9.64       39.13    25.6
+    20        13.73       43.22    23.1
+    30        18.71       48.20    20.7
+
+at 30 cones: two-stage 48.2 ms vs single-stage 27.0 ms  (1.79x)
+
+wrote results/metrics/benchmark_fp16.json

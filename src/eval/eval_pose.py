@@ -336,7 +336,9 @@ def main():
     p.add_argument("--weights", required=True, help="Trained YOLO-pose .pt")
     p.add_argument("--data-root", required=True, type=Path)
     p.add_argument("--n-kpt", required=True, type=int, choices=[4, 6, 7, 8])
-    p.add_argument("--corrupt", default="none", choices=["none", "blur", "noise", "dark"])
+    p.add_argument("--corrupt", default="none",
+                   choices=["none", "blur", "noise", "dark",
+                            "sun", "overcast", "shadow", "backlight"])
     p.add_argument("--level", default=0.0, type=float, help="Corruption strength, 0-1")
     p.add_argument("--device", default="0")
     p.add_argument("--limit", default=0, type=int, help="Cap test images (0 = all)")
