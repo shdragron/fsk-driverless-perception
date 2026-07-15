@@ -1,6 +1,6 @@
 # Copyright (c) MIT Driverless / cv-core, licensed under Apache License 2.0.
 # Source: https://github.com/cv-core/MIT-Driverless-CV-TrainingInfra (RektNet/keypoint_net.py)
-# Unmodified except for this notice and the import path below.
+# Modified: .view() -> .reshape() for PyTorch tensor-stride compatibility; import path updated.
 # The Apache-2.0 license text is preserved at LICENSE.apache-2.0.
 
 import torch.nn as nn
@@ -48,9 +48,9 @@ class KeypointNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def flat_softmax(self, inp):
-        flat = inp.view(-1, self.image_size[0] * self.image_size[1])
+        flat = inp.reshape(-1, self.image_size[0] * self.image_size[1])
         flat = torch.nn.functional.softmax(flat, 1)
-        return flat.view(-1, self.num_kpt, self.image_size[0], self.image_size[1])
+        return flat.reshape(-1, self.num_kpt, self.image_size[0], self.image_size[1])
 
     def soft_argmax(self, inp):
         values_y = torch.linspace(0, (self.image_size[0] - 1.) / self.image_size[0], self.image_size[0], dtype=inp.dtype, device=inp.device)
@@ -71,4 +71,4 @@ class KeypointNet(nn.Module):
         else:
             hm = self.flat_softmax(self.out(act5))
             out = self.soft_argmax(hm)
-            return hm, out.view(-1, self.num_kpt, 2)
+            return hm, out.reshape(-1, self.num_kpt, 2)
