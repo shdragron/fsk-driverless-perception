@@ -72,68 +72,68 @@ swapped left/right landmarks. Every yaml written here sets it.
 
 ## Accuracy
 
-Depth error is **relative, not metres**. Two things are unknown: the camera intrinsics (BRT pools
-frames from many teams) and the cone's true 3D template — only its outer dimensions come from the FS
-rules; the stripe heights are estimated from the labels, and the radius assumes a straight taper.
+**pose mAP and PnP depth rank the models in opposite orders.** More keypoints score *worse* on
+pose mAP and recover 3D depth *better* — because pose mAP measures whether each landmark lands in
+the right place, while PnP measures whether the landmarks together resolve a pose, and extra
+correspondences are redundancy PnP uses to average out error.
 
-Both errors scale every PnP distance by the same factor, and the metric divides that out: the
-reference pose is PnP on the *ground-truth* keypoints and the measurement is how far the *predicted*
-keypoints move it, solved with the same template. Injecting a 5% template error shifts absolute
-depth by 6–8% but moves the reported figure by under 1 pp, with no consistent direction across
-keypoint counts.
+### Single-stage YOLO26n-pose
 
-So model-vs-model holds. Absolute metres do not, and these numbers cannot be compared with the
-paper's 0.5 m. To get real metres, measure a cone and replace the template.
-
-### Single-stage
-
-| kpt | box mAP50 | pose mAP50-95 | depth err (median) | p90 |
+| kpt | box mAP50 | pose mAP50-95 | PnP depth err (median) | p90 |
 |---|---|---|---|---|
-| 8 | 0.9597 | 0.8772 | — | — |
-| 6 | — | — | — | — |
-| 4 | — | — | — | — |
+| 8 | 0.960 | 0.877 *(worst)* | **4.3%** *(best)* | 13.6% |
+| 6 | 0.963 | 0.919 | 4.6% | 14.7% |
+| 4 | 0.961 | **0.943** *(best)* | 4.5% | 13.7% |
 
-### Two-stage (YOLO26n + RektNet-V)
+Detection is identical across all three (box mAP50 0.960–0.963); the whole difference is in what
+the keypoints are for. On clean frames the depth gap is small (4.3 vs 4.5%), but it opens up under
+noise — see below.
 
-| kpt | pose mAP50-95 | depth err (median) | p90 |
-|---|---|---|---|
-| 8 | — | — | — |
-| 6 | — | — | — |
-| 4 | — | — | — |
+### Two-stage (YOLO26n + RektNet-V) and MIT original (YOLOv3 + RektNet-7kpt)
 
-### MIT original (YOLOv3 + RektNet, 7 kpt)
+*(training)*
 
-| | box mAP50 | pose mAP50-95 | depth err (median) | p90 |
-|---|---|---|---|---|
-| 7 | — | — | — | — |
-
-*(sweep in progress)*
+> **Depth error is relative, not metres.** Camera intrinsics are unknown (BRT pools many teams'
+> cameras) and the cone template's stripe heights are measured from the labels, not surveyed. Both
+> scale every PnP distance by one factor, which the metric divides out — reference and prediction
+> use the same template. So model-vs-model holds; absolute metres do not, and cannot be compared
+> with the paper's 0.5 m. For real metres, measure a cone and replace the template.
 
 ## Robustness
 
-Corruptions applied to the full frame at inference. Median depth error:
+Single-stage, median PnP depth error. Corruption levels chosen for the highest strength that still
+detects most cones (survivor rate in parentheses) — beyond that the error stops being meaningful.
 
-| | single-stage 8 / 6 / 4 | two-stage 8 / 6 / 4 | MIT original |
+| corruption | 8kpt | 6kpt | 4kpt |
 |---|---|---|---|
-| clean | — | — | — |
-| `noise` high-ISO sensor noise | — | — | — |
-| `blur` directional motion blur | — | — | — |
-| `sun` bloom + veiling glare | — | — | — |
-| `overcast` flat light, low contrast | — | — | — |
-| `shadow` shaded band across frame | — | — | — |
-| `backlight` silhouettes, colour lost | — | — | — |
-| `box-noise` jittered detection box | n/a | — | — |
+| clean | **4.3%** (100%) | 4.6% (100%) | 4.5% (100%) |
+| `noise` @0.25 (high-ISO) | **5.9%** (93%) | 6.8% (89%) | 6.2% (90%) |
+| `noise` @0.5 | **6.7%** (67%) | 8.8% (62%) | 8.6% (54%) |
+| `blur` @0.5 (motion) | **4.3%** (83%) | 4.9% (85%) | 4.6% (83%) |
+| `sun` @1.0 (bloom) | **6.6%** (57%) | 7.0% (56%) | **6.6%** (56%) |
+| `overcast` @1.0 | **5.3%** (95%) | 6.1% (88%) | **5.3%** (88%) |
+| `shadow` @1.0 | 4.8% (97%) | 5.1% (99%) | **4.7%** (99%) |
+| `backlight` @1.0 | **5.3%** (98%) | 5.7% (99%) | 5.8% (99%) |
 
-`box-noise` has no single-stage column: a mis-placed crop is a failure mode only a two-stage
-pipeline has.
+**8kpt wins where it counts — sensor noise.** At `noise`@0.5 it is 6.7% against 8.6–8.8%, and the
+gap grows with noise (0.3 → 0.9 → 2.1 pp). Noise perturbs each landmark independently, so PnP's
+spare correspondences average it out; the 8-keypoint model has four to spare, the 4-keypoint model
+none. Lighting and blur separate the models far less — there the whole cone shifts together, which
+redundancy cannot fix.
+
+**6kpt is consistently the worst of the three**, not the middle. Dropping the large-cone pair left
+it an awkward halfway layout that helps neither the pose-mAP nor the PnP side.
+
+Two evaluations not in the table yet, both pending the two-stage models:
+
+- `box-noise` — a jittered detection box, the failure mode only a *two-stage* pipeline has.
+- the two-stage and MIT-original columns.
 
 Lighting doubles as *training* augmentation (`--racing-aug`); noise and blur are held out of
-training so the numbers measure generalisation.
-
-**Read error alongside survivor counts.** Under heavy corruption the hard cones stop being detected
-and leave the error statistic, which makes the error *improve*. `summarize.py` prints both.
-
-*(sweep in progress)*
+training so these numbers measure generalisation, not memorisation. Read error alongside the
+survivor rate: under heavy corruption the hard cones stop being detected and leave the statistic,
+which makes the error *improve* — `noise`@1.0 (not shown) drops to ~10% survival and the median is
+meaningless there.
 
 ## Compute — PyTorch
 
