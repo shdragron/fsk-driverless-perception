@@ -30,6 +30,9 @@ from src.models.keypoint_net import KeypointNet
 
 INPUT_SIZE = (80, 80)
 
+# Which of the 8 frame keypoints each variant uses, matching make_keypoint_variants / make_cone_crops.
+KEEP = {8: [0,1,2,3,4,5,6,7], 7: [0,1,2,3,4,5,6], 6: [0,1,2,3,4,5], 4: [0,1,4,5]}
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -82,7 +85,11 @@ def main():
                 continue
             t = [float(x) for x in line.split()]
             cls = int(t[0])
-            kpts = np.array(t[5:]).reshape(-1, 3)[: args.num_kpt]
+            # Select the same keypoint indices the model was trained on -- NOT the first num_kpt.
+            # 4kpt keeps top+base [0,1,4,5]; taking the first four ([0,1,2,3] = top+mid) would feed
+            # PnP the mid pair as ground truth while the model predicts the base pair, so GT and
+            # prediction would describe different physical points. That is what put 4kpt at 41%.
+            kpts = np.array(t[5:]).reshape(-1, 3)[KEEP[args.num_kpt]]
 
             # Feed PnP only the keypoints this cone actually has. Skipping any cone with an
             # absent keypoint would, at 8kpt, discard the 94.7% of cones without kpt6/7 -- and
