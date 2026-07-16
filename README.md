@@ -10,6 +10,22 @@ and measures how many keypoints PnP depth recovery actually needs.
 
 ---
 
+## Findings
+
+On the leak-free split, with the measured cone template:
+
+1. **Two-stage is more accurate — but only with a perfect crop.** Given ground-truth boxes RektNet-V
+   roughly halves single-stage depth error (2.3% vs 4.3% clean). Jitter the box (`box-noise`, the
+   failure mode only two-stage has) and it degrades to 9.2% — worse than single-stage. The
+   advantage is entirely contingent on detection, which it cannot control.
+2. **Two-stage is slowest exactly when the scene is busiest.** Its cost is one RektNet pass per cone,
+   so at 30 cones (a slalom entry) it is 1.79× slower than single-stage's flat 27 ms.
+3. **pose mAP and PnP depth rank the models oppositely.** Fewer keypoints score better on pose mAP
+   yet recover worse depth under noise, where extra keypoints give PnP redundancy to average over.
+
+The single-stage one-pass model is the better fit for real racing — many cones, imperfect detection
+— while two-stage wins a controlled setting it rarely gets.
+
 ## Model
 
 | | detector | keypoints | params |
@@ -221,7 +237,7 @@ src/
   models/ keypoint_net, resnet, cross_ratio_loss     (RektNet, from upstream)
   eval/   eval_pose, eval_rektnet, summarize, benchmark
   viz/    plot_metrics, gallery, zoom, predict_image, predict_batch
-  train_pose.py       single-stage
+  train_pose.py       single-stage pose, or --task detect for a box-only cone detector
   train_rektnet.py    RektNet-V, and the 7-kpt original
 scripts/run_all.sh
 ```
