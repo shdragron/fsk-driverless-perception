@@ -105,6 +105,11 @@ Detection is identical across all three (box mAP50 0.960–0.963); the whole dif
 the keypoints are for. On clean frames the depth gap is small (4.3 vs 4.5%), but it opens up under
 noise — see below.
 
+**Adding keypoints does not cost detection.** A box-only detector trained on the same split scores
+box mAP50 0.959 / mAP50-95 0.824 — the pose models match it on mAP50 (0.960–0.963) and give up only
+~0.01 on the stricter mAP50-95. So the single-stage model gets its keypoints essentially for free,
+detection-wise; the auxiliary keypoint supervision even nudges mAP50 up. (`scripts/train_detector.sh`)
+
 ### Two-stage (YOLO26n + RektNet-V)
 
 RektNet is fed crops cut from **ground-truth** boxes — a perfect detector — so these are its
